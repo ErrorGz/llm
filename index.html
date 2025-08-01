@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Vite + Vue</title>
+</head>
+
+<body>
+    <!-- 添加一个不可见的div用于设置视口高度 -->
+    <div id="vh-check" style="position: fixed; height: 100vh; pointer-events: none; visibility: hidden;"></div>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+    <script>
+        // 设置CSS变量来存储实际的视口高度
+        function setVH() {
+            let vh = document.getElementById('vh-check').clientHeight * 0.01;
+            document.documentElement.style.setProperty('--vh', `${vh}px`);
+        }
+
+        // // 初始设置
+        // setVH();
+        // // 监听resize事件
+        // window.addEventListener('resize', setVH);
+    </script>
+</body>
+
+</html>
