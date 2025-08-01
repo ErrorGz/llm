@@ -82,7 +82,7 @@
         <div class="input-area">
             <div class="input-wrapper">
                 <input :value="newMessage" @input="emit('update:newMessage', $event.target.value)" type="text"
-                    placeholder="请输入消息..." @keyup.enter="emit('sendMessage')" @click="emit('openLongText')" readonly>
+                    placeholder="请输入消息..." @click="emit('openLongText')" readonly>
                 <button class="prompts-button" @click="emit('openPrompts')">
                     <span class="prompts-icon"></span>
                 </button>

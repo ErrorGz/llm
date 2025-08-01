@@ -616,8 +616,13 @@ const switchLLM = () => {
 
 // AutoGen模式发送消息 (支持流式推送)
 const sendToAutogen = async (content) => {
+    console.log('AutoGen模式发送消息:', content)
+    console.log('当前团队:', currentTeam.value)
+    console.log('会话ID:', conversationId.value)
+    
     if (!currentTeam.value || !conversationId.value) {
         // 如果没有活跃团队，尝试创建默认团队
+        console.log('创建默认团队...')
         await createDefaultTeam()
         if (!currentTeam.value) {
             alert('请先创建或选择一个智能体团队')
@@ -626,7 +631,9 @@ const sendToAutogen = async (content) => {
     }
 
     // 确保会话存在
+    console.log('确保会话存在...')
     await ensureAutogenSession()
+    console.log('会话验证完成，会话ID:', conversationId.value)
 
     try {
         // 先检查是否需要MCP工具
@@ -700,12 +707,20 @@ const sendToAutogen = async (content) => {
         }
 
         // 使用AutoGen服务发送消息（带流式更新）
+        console.log('调用autogenService.sendMessage，参数:', {
+            conversationId: conversationId.value,
+            content,
+            senderId: 'user'
+        })
+        
         const updatedConversation = await autogenService.sendMessage(
             conversationId.value, 
             content, 
             'user', 
             handleStreamUpdate
         )
+        
+        console.log('autogenService.sendMessage返回结果:', updatedConversation)
         
         // 最终更新消息列表
         messageList.value = []
