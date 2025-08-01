@@ -61,6 +61,10 @@
                         :class="{ 'sender-info-self': msg.isSelf }">
                         <span class="sender-avatar">{{ msg.avatar }}</span>
                         <span class="sender-name">{{ msg.sender }}</span>
+                        <span v-if="msg.status && msg.status !== 'idle'" class="message-status" :class="msg.status">
+                            <span class="status-dot" :class="msg.status"></span>
+                            {{ getStatusText(msg.status) }}
+                        </span>
                     </div>
                     <div class="message-bubble"
                         :style="{ transform: `translateX(${msg.showDelete ? `-${deleteButtonWidth}px` : '0'})` }"
@@ -294,6 +298,17 @@ watch(() => props.activeUsers, (newActiveUsers) => {
 // 停止播放
 const stopPlayback = () => {
     emit('stop-playback')
+}
+
+// 获取状态文本
+const getStatusText = (status) => {
+    const statusMap = {
+        'thinking': '思考中...',
+        'speaking': '回复中...',
+        'listening': '听取中...',
+        'idle': '空闲'
+    }
+    return statusMap[status] || status
 }
 
 // 长按计时器
@@ -755,5 +770,65 @@ input {
     75% {
         transform: rotate(15deg);
     }
+}
+
+/* 消息状态样式 */
+.message-status {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    margin-left: 8px;
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0,0,0,0.1);
+}
+
+.message-status.thinking {
+    background: rgba(255, 193, 7, 0.2);
+    color: #856404;
+}
+
+.message-status.speaking {
+    background: rgba(23, 162, 184, 0.2);
+    color: #0c5460;
+}
+
+.message-status.listening {
+    background: rgba(111, 66, 193, 0.2);
+    color: #4a237a;
+}
+
+.status-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 4px;
+}
+
+.status-dot.thinking {
+    background: #ffc107;
+    animation: message-status-pulse 1.5s infinite;
+}
+
+.status-dot.speaking {
+    background: #17a2b8;
+    animation: message-status-bounce 1s infinite;
+}
+
+.status-dot.listening {
+    background: #6f42c1;
+    animation: message-status-pulse 2s infinite;
+}
+
+@keyframes message-status-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+@keyframes message-status-bounce {
+    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-2px); }
+    60% { transform: translateY(-1px); }
 }
 </style>

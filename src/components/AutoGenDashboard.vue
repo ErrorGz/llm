@@ -23,6 +23,7 @@
                             <span class="agent-avatar">{{ agent.avatar }}</span>
                             <span class="agent-name">{{ agent.name }}</span>
                             <span class="agent-state" :class="agent.status">
+                                <span class="status-dot" :class="agent.status"></span>
                                 {{ getAgentStatusText(agent.status) }}
                             </span>
                         </div>
@@ -508,6 +509,45 @@ onUnmounted(() => {
 .agent-state.thinking { background: #ffc107; color: #212529; }
 .agent-state.speaking { background: #17a2b8; color: white; }
 .agent-state.listening { background: #6f42c1; color: white; }
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+}
+
+.status-dot.idle { 
+    background: #fff; 
+    animation: none; 
+}
+
+.status-dot.thinking { 
+    background: #212529; 
+    animation: pulse 1.5s infinite;
+}
+
+.status-dot.speaking { 
+    background: #fff; 
+    animation: bounce 1s infinite;
+}
+
+.status-dot.listening { 
+    background: #fff; 
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+@keyframes bounce {
+    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+    40% { transform: translateY(-3px); }
+    60% { transform: translateY(-2px); }
+}
 
 .no-team, .no-task {
     text-align: center;
