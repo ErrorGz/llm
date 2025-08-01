@@ -625,6 +625,9 @@ const sendToAutogen = async (content) => {
         }
     }
 
+    // 确保会话存在
+    await ensureAutogenSession()
+
     try {
         // 先检查是否需要MCP工具
         const mcpResult = await mcpService.autoSelectAndExecute(content)
@@ -942,6 +945,54 @@ const loadAgentTeams = () => {
         if (defaultTeam) {
             currentTeam.value = defaultTeam
             conversationId.value = defaultTeam.conversationId
+            
+            // 验证会话是否在AutoGen服务中存在
+            if (defaultTeam.conversationId && !autogenService.getConversation(defaultTeam.conversationId)) {
+                console.log('发现无效的会话ID，将在下次发送消息时重新创建')
+                // 不立即清除，而是在发送消息时处理
+            }
+        }
+    }
+}
+
+// 确保AutoGen会话同步
+const ensureAutogenSession = async () => {
+    if (!useAutogenMode.value || !currentTeam.value) {
+        return
+    }
+    
+    // 如果没有conversationId或会话不存在，重新创建
+    if (!conversationId.value || !autogenService.getConversation(conversationId.value)) {
+        console.log('重新同步AutoGen会话')
+        try {
+            const teamConfig = {
+                name: currentTeam.value.name || '默认智能体团队',
+                workflowType: currentTeam.value.workflowType || 'group_chat',
+                agents: currentTeam.value.agents?.length > 0 
+                    ? currentTeam.value.agents.map(agent => ({
+                        type: agent.type || agent.role || 'analyst',
+                        llmConfig: currentTeam.value.llmConfig
+                    }))
+                    : [
+                        { type: 'analyst', llmConfig: currentTeam.value.llmConfig },
+                        { type: 'researcher', llmConfig: currentTeam.value.llmConfig }
+                    ]
+            }
+            
+            const conversation = await autogenService.createAgentTeam(teamConfig)
+            conversationId.value = conversation.id
+            currentTeam.value.conversationId = conversation.id
+            
+            // 更新localStorage
+            const teamIndex = agentTeams.value.findIndex(team => team.id === currentTeam.value.id)
+            if (teamIndex >= 0) {
+                agentTeams.value[teamIndex] = currentTeam.value
+                localStorage.setItem('agentTeamList', JSON.stringify(agentTeams.value))
+            }
+            
+            console.log('AutoGen会话重新同步成功')
+        } catch (error) {
+            console.error('同步AutoGen会话失败:', error)
         }
     }
 }
@@ -1103,12 +1154,16 @@ onMounted(() => {
         activeUsers.value = JSON.parse(savedActiveUsers)
     }
 
-    // 如果是AutoGen模式且没有当前团队，尝试创建默认团队
-    if (useAutogenMode.value && !currentTeam.value && llmOptions.value.length > 0) {
-        nextTick(() => {
-            createDefaultTeam()
-        })
-    }
+    // 初始化AutoGen会话
+    nextTick(async () => {
+        if (useAutogenMode.value && llmOptions.value.length > 0) {
+            if (!currentTeam.value) {
+                await createDefaultTeam()
+            }
+            // 确保会话正确同步
+            await ensureAutogenSession()
+        }
+    })
 })
 
 // 滚动到底部的方法
