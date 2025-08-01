@@ -646,6 +646,11 @@ const sendToAutogen = async (content) => {
 
         // 流式更新处理器
         const handleStreamUpdate = (event) => {
+            // 将所有接收到的事件信息转为字符串显示到控制台，方便复制
+            console.log('=== AutoGen事件信息 ===')
+            console.log(JSON.stringify(event, null, 2))
+            console.log('=====================')
+            
             switch (event.type) {
                 case 'agent_selected':
                     console.log(`智能体选择: ${event.agent.name} - ${event.reason}`)
@@ -663,6 +668,15 @@ const sendToAutogen = async (content) => {
                 case 'content_update':
                     // 实时更新消息内容
                     const conversation = event.conversation
+                    console.log('=== 对话内容更新 ===')
+                    console.log('最新消息:', conversation.messages[conversation.messages.length - 1]?.content || '无内容')
+                    console.log('完整对话:', JSON.stringify(conversation.messages.map(m => ({
+                        sender: m.senderName,
+                        content: m.content,
+                        isSelf: m.isSelf
+                    })), null, 2))
+                    console.log('==================')
+                    
                     messageList.value = []
                     conversation.messages.forEach(msg => {
                         messageList.value.push({
@@ -684,6 +698,11 @@ const sendToAutogen = async (content) => {
                     
                 case 'agent_complete':
                     console.log(`${event.agent.name} 回复完成`)
+                    console.log('=== 智能体完整回复 ===')
+                    console.log('回复内容:', event.message?.content || '无内容')
+                    console.log('智能体:', event.agent?.name || '未知')
+                    console.log('==================')
+                    
                     // 智能体状态设为空闲
                     if (currentTeam.value) {
                         const agent = currentTeam.value.agents.find(a => a.id === event.agent.id)
@@ -721,6 +740,22 @@ const sendToAutogen = async (content) => {
         )
         
         console.log('autogenService.sendMessage返回结果:', updatedConversation)
+        
+        // 输出最终对话结果的字符串格式，方便复制
+        console.log('=== 最终对话结果（可复制） ===')
+        console.log('对话JSON:', JSON.stringify(updatedConversation.messages.map(m => ({
+            sender: m.senderName,
+            content: m.content,
+            isSelf: m.isSelf,
+            timestamp: m.timestamp
+        })), null, 2))
+        
+        // 纯文本格式
+        const textFormat = updatedConversation.messages.map(m => 
+            `${m.senderName}: ${m.content}`
+        ).join('\n\n')
+        console.log('对话文本格式:\n' + textFormat)
+        console.log('===========================')
         
         // 最终更新消息列表
         messageList.value = []
