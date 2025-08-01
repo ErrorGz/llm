@@ -153,15 +153,7 @@ const confirmLLMSelection = () => {
     }
 }
 
-// 获取状态文本
-const getStatusText = (status) => {
-    const statusMap = {
-        idle: '空闲',
-        thinking: '思考中',
-        speaking: '说话中',
-    }
-    return statusMap[status] || '空闲'
-}
+
 
 // 添加名称格式化方法
 const formatName = (name) => {

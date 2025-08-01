@@ -1488,13 +1488,13 @@ class AutoGenService {
     async callLLMStream(llmConfig, messages, onChunk) {
         console.log('callLLMStream调用，配置:', llmConfig)
         console.log('发送的消息:', messages)
-        
+
         // 如果没有配置，使用模拟响应进行测试
         if (!llmConfig || !llmConfig.endpoint || !llmConfig.apiKey) {
             console.warn('LLM配置不完整，使用模拟响应')
             return this.simulateStreamResponse(onChunk, messages)
         }
-        
+
         try {
             const response = await fetch(llmConfig.endpoint, {
                 method: 'POST',
@@ -1561,10 +1561,10 @@ class AutoGenService {
             "让我为您提供详细的解答。",
             "如果您还有其他问题，请随时告诉我。"
         ]
-        
+
         const userMessage = messages[messages.length - 1]?.content || ''
         let response = responses[Math.floor(Math.random() * responses.length)]
-        
+
         // 根据用户消息生成更相关的回复
         if (userMessage.includes('你好') || userMessage.includes('hello')) {
             response = "你好！我是AutoGen智能助手，很高兴为您服务！有什么我可以帮助您的吗？"
@@ -1573,7 +1573,7 @@ class AutoGenService {
         } else {
             response = `我理解您说的是"${userMessage}"。作为AutoGen智能助手，我会尽我所能为您提供帮助和建议。`
         }
-        
+
         // 模拟流式输出
         for (let i = 0; i < response.length; i += 2) {
             const chunk = response.substring(i, i + 2)
