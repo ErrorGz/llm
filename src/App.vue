@@ -5,7 +5,8 @@
             :new-message="newMessage" :is-playing="isPlaying" :active-users="activeUsers" :llm-options="llmOptions"
             @openMenu="toggleSidebar" @toggle-playback="togglePlayback" @stop-playback="stopPlayback"
             @send-message="sendMessage" @update:new-message="newMessage = $event" @open-long-text="openLongTextEditor"
-            @openPrompts="openPromptsManager" @update:messageList="updateMessageList" @clearQueue="clearMessageQueue"
+            @openPrompts="openPromptsManager" @openVoiceSettings="openVoiceSettings"
+            @update:messageList="updateMessageList" @clearQueue="clearMessageQueue"
             @update:activeUsers="updateActiveUsers" @confirmLLMSelection="confirmLLMSelection"
             @updateUserStatus="updateUserStatus" />
 
@@ -45,6 +46,12 @@
                 @select="handlePromptSelect" />
         </transition>
 
+        <!-- 语音设置 -->
+        <transition name="fade">
+            <VoiceSettingsSimple v-if="showVoiceSettings" :current-settings="speechConfig"
+                @close="showVoiceSettings = false" @update:settings="updateVoiceSettings" />
+        </transition>
+
         <!-- LLM选择器 -->
         <div v-if="showLLMSelector" class="llm-selector-container">
             <select class="llm-selector" v-model="selectedLLMId" @change="confirmLLMSelection(selectedLLMId)"
@@ -57,40 +64,23 @@
 
         <!-- 模式切换 -->
         <div v-if="!showSettings" class="mode-switch">
-            <button 
-                class="mode-button" 
-                :class="{ active: useAutogenMode }"
-                @click="useAutogenMode = true"
-            >
+            <button class="mode-button" :class="{ active: useAutogenMode }" @click="useAutogenMode = true">
                 🤖 AutoGen模式
             </button>
-            <button 
-                class="mode-button" 
-                :class="{ active: !useAutogenMode }"
-                @click="useAutogenMode = false"
-            >
+            <button class="mode-button" :class="{ active: !useAutogenMode }" @click="useAutogenMode = false">
                 💬 传统模式
             </button>
         </div>
 
         <!-- AutoGen仪表板 (AutoGen模式) -->
-        <AutoGenDashboard 
-            v-if="useAutogenMode && !showSettings" 
-            @createTeam="showAgentManager = true"
-        />
-        
+        <AutoGenDashboard v-if="useAutogenMode && !showSettings" @createTeam="showAgentManager = true" />
+
         <!-- 智能体团队管理器 (AutoGen模式) -->
-        <AgentTeamManager 
-            v-if="useAutogenMode && !showSettings" 
-            @updateTeamOptions="loadAgentTeams" 
-            @teamCreated="handleTeamCreated"
-        />
-        
+        <AgentTeamManager v-if="useAutogenMode && !showSettings" @updateTeamOptions="loadAgentTeams"
+            @teamCreated="handleTeamCreated" />
+
         <!-- LLM管理器 (传统模式) -->
-        <LLMManager 
-            v-if="!useAutogenMode && !showSettings" 
-            @updateLLMOptions="loadLLMOptions" 
-        />
+        <LLMManager v-if="!useAutogenMode && !showSettings" @updateLLMOptions="loadLLMOptions" />
 
         <!-- 当前团队状态 (AutoGen模式) -->
         <div v-if="useAutogenMode && currentTeam && !showSettings" class="current-team-status">
@@ -125,6 +115,7 @@ import ChatPage from './components/ChatPage.vue'
 import LLMManager from './components/LLMManager.vue'
 import AgentTeamManager from './components/AgentTeamManager.vue'
 import AutoGenDashboard from './components/AutoGenDashboard.vue'
+import VoiceSettingsSimple from './components/VoiceSettingsSimple.vue'
 import { autogenService } from './services/autogenService.js'
 import { mcpService } from './services/mcpService.js'
 import './styles/common.css'
@@ -168,6 +159,7 @@ const showSettings = ref(false)
 const isPlaying = ref(false)
 const showLongTextEditor = ref(false)
 const showPromptsManager = ref(false)
+const showVoiceSettings = ref(false)
 const selectedLLM = ref(null)
 const showLLMSelector = ref(false)
 const selectedLLMId = ref(null)
@@ -187,17 +179,21 @@ const conversationId = ref(null)
 const showAgentManager = ref(false)
 const useAutogenMode = ref(true) // 是否使用AutoGen模式
 
-// 语音模型配置
-const SPEECH_CONFIG = {
+// 语音模型配置（响应式）
+const speechConfig = ref({
+    enabled: true,
     endpoint: 'https://api.siliconflow.cn/v1/audio/speech',
     model: 'FunAudioLLM/CosyVoice2-0.5B',
     voice: 'FunAudioLLM/CosyVoice2-0.5B:diana',
     response_format: 'mp3',
-    sample_rate: 32000,
+    sample_rate: 44100,
     stream: true,
     speed: 1,
     gain: 0
-}
+})
+
+// 为了向后兼容，保留SPEECH_CONFIG
+const SPEECH_CONFIG = speechConfig.value
 
 // 音频播放器
 const audioPlayer = new Audio()
@@ -441,9 +437,25 @@ const generateNextSpeech = async () => {
 
     const text = speechQueue.value[0]
 
-    // 获取当前 LLM 的 ID，去掉 "llm_" 前缀
-    const llmId = currentLLM.value.id.replace('llm_', '');
-    const llm = llmOptions.value.find(option => String(option.id) === String(llmId)); // 根据 ID 查找对应的 LLM
+    // 获取API密钥：优先使用currentLLM，如果没有则从当前团队或默认LLM获取
+    let llm = null
+
+    if (currentLLM.value?.id) {
+        // 传统模式：从currentLLM获取
+        const llmId = currentLLM.value.id.replace('llm_', '');
+        llm = llmOptions.value.find(option => String(option.id) === String(llmId));
+    } else if (useAutogenMode.value && currentTeam.value?.llmConfig) {
+        // AutoGen模式：使用团队的LLM配置
+        llm = currentTeam.value.llmConfig
+    } else {
+        // 备选方案：使用默认LLM
+        llm = llmOptions.value.find(llm => llm.isDefault) || llmOptions.value[0]
+    }
+
+    if (!llm?.apiKey) {
+        console.error('无法获取LLM配置或API密钥，无法生成语音')
+        return null
+    }
 
     // 检查缓存
     if (audioCache.has(text)) {
@@ -455,21 +467,21 @@ const generateNextSpeech = async () => {
     }
 
     try {
-        const response = await fetch(SPEECH_CONFIG.endpoint, {
+        const response = await fetch(speechConfig.value.endpoint, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${llm.apiKey}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                model: SPEECH_CONFIG.model,
+                model: speechConfig.value.model,
                 input: text,
-                voice: SPEECH_CONFIG.voice,
-                response_format: SPEECH_CONFIG.response_format,
-                sample_rate: SPEECH_CONFIG.sample_rate,
-                stream: SPEECH_CONFIG.stream,
-                speed: SPEECH_CONFIG.speed,
-                gain: SPEECH_CONFIG.gain
+                voice: speechConfig.value.voice,
+                response_format: speechConfig.value.response_format,
+                sample_rate: speechConfig.value.sample_rate,
+                stream: speechConfig.value.stream,
+                speed: speechConfig.value.speed,
+                gain: speechConfig.value.gain
             })
         })
 
@@ -502,21 +514,49 @@ const generateAndPlaySpeech = async (text, callbacks = {}) => {
             onError: callbacks.onError
         }
 
-        const requestParams = {
-            model: SPEECH_CONFIG.model,
-            input: text,
-            voice: SPEECH_CONFIG.voice,
-            response_format: SPEECH_CONFIG.response_format,
-            sample_rate: SPEECH_CONFIG.sample_rate,
-            stream: SPEECH_CONFIG.stream,
-            speed: SPEECH_CONFIG.speed,
-            gain: SPEECH_CONFIG.gain
+        // 获取API密钥：优先使用currentLLM，如果没有则从当前团队或默认LLM获取
+        let apiKey = null
+
+        if (currentLLM.value?.apiKey) {
+            // 传统模式：使用currentLLM
+            apiKey = currentLLM.value.apiKey
+            console.log('使用传统模式LLM的API密钥')
+        } else if (useAutogenMode.value && currentTeam.value?.llmConfig?.apiKey) {
+            // AutoGen模式：使用团队的LLM配置
+            apiKey = currentTeam.value.llmConfig.apiKey
+            console.log('使用AutoGen团队LLM的API密钥')
+        } else {
+            // 备选方案：使用默认LLM
+            const defaultLLM = llmOptions.value.find(llm => llm.isDefault) || llmOptions.value[0]
+            if (defaultLLM?.apiKey) {
+                apiKey = defaultLLM.apiKey
+                console.log('使用默认LLM的API密钥')
+            }
         }
 
-        const response = await fetch(SPEECH_CONFIG.endpoint, {
+        if (!apiKey) {
+            console.error('无法获取API密钥，无法生成语音')
+            audioEvents.value.onError?.('无法获取API密钥')
+            return
+        }
+
+        const requestParams = {
+            model: speechConfig.value.model,
+            input: text,
+            voice: speechConfig.value.voice,
+            response_format: speechConfig.value.response_format,
+            sample_rate: speechConfig.value.sample_rate,
+            stream: speechConfig.value.stream,
+            speed: speechConfig.value.speed,
+            gain: speechConfig.value.gain
+        }
+
+        console.log('开始语音生成，文本长度:', text.length)
+
+        const response = await fetch(speechConfig.value.endpoint, {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${currentLLM.value?.apiKey}`,
+                'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -543,6 +583,7 @@ const generateAndPlaySpeech = async (text, callbacks = {}) => {
         audioPlayer.src = audioUrl
         audioEvents.value.onStart?.()
         await audioPlayer.play()
+        console.log('语音播放开始')
     } catch (error) {
         console.error('语音生成或播放失败:', error)
         isPlaying.value = false
@@ -619,11 +660,11 @@ const sendToAutogen = async (content) => {
     console.log('AutoGen模式发送消息:', content)
     console.log('当前团队:', currentTeam.value)
     console.log('会话ID:', conversationId.value)
-    
+
     if (!currentTeam.value || !conversationId.value) {
         // 如果没有活跃团队，尝试创建默认团队
         console.log('创建默认团队...')
-        await createDefaultTeam()
+        await createDefaultTeam(true)
         if (!currentTeam.value) {
             alert('请先创建或选择一个智能体团队')
             return
@@ -650,12 +691,12 @@ const sendToAutogen = async (content) => {
             console.log('=== AutoGen事件信息 ===')
             console.log(JSON.stringify(event, null, 2))
             console.log('=====================')
-            
+
             switch (event.type) {
                 case 'agent_selected':
                     console.log(`智能体选择: ${event.agent.name} - ${event.reason}`)
                     break
-                    
+
                 case 'agent_start':
                     console.log(`${event.agent.name} 开始回复...`)
                     // 智能体状态设为思考中
@@ -664,7 +705,7 @@ const sendToAutogen = async (content) => {
                         if (agent) agent.status = 'thinking'
                     }
                     break
-                    
+
                 case 'content_update':
                     // 实时更新消息内容
                     const conversation = event.conversation
@@ -676,7 +717,7 @@ const sendToAutogen = async (content) => {
                         isSelf: m.isSelf
                     })), null, 2))
                     console.log('==================')
-                    
+
                     messageList.value = []
                     conversation.messages.forEach(msg => {
                         messageList.value.push({
@@ -689,36 +730,36 @@ const sendToAutogen = async (content) => {
                             metadata: msg.metadata
                         })
                     })
-                    
+
                     // 滚动到底部
                     nextTick(() => {
                         scrollToBottom()
                     })
                     break
-                    
+
                 case 'agent_complete':
                     console.log(`${event.agent.name} 回复完成`)
                     console.log('=== 智能体完整回复 ===')
                     console.log('回复内容:', event.message?.content || '无内容')
                     console.log('智能体:', event.agent?.name || '未知')
                     console.log('==================')
-                    
+
                     // 智能体状态设为空闲
                     if (currentTeam.value) {
                         const agent = currentTeam.value.agents.find(a => a.id === event.agent.id)
                         if (agent) agent.status = 'idle'
                     }
-                    
+
                     // 如果开启了语音播放，播放完整的回复
-                    if (isPlaying.value && event.message.content) {
+                    if (isPlaying.value && speechConfig.value.enabled && event.message.content) {
                         generateAndPlaySpeech(event.message.content)
                     }
                     break
-                    
+
                 case 'sequence_start':
                     console.log(`顺序模式: ${event.agent.name} (${event.index + 1}/${event.total})`)
                     break
-                    
+
                 case 'sequence_complete':
                     console.log(`顺序模式: ${event.agent.name} 完成 (${event.index + 1}/${event.total})`)
                     break
@@ -731,16 +772,16 @@ const sendToAutogen = async (content) => {
             content,
             senderId: 'user'
         })
-        
+
         const updatedConversation = await autogenService.sendMessage(
-            conversationId.value, 
-            content, 
-            'user', 
+            conversationId.value,
+            content,
+            'user',
             handleStreamUpdate
         )
-        
+
         console.log('autogenService.sendMessage返回结果:', updatedConversation)
-        
+
         // 输出最终对话结果的字符串格式，方便复制
         console.log('=== 最终对话结果（可复制） ===')
         console.log('对话JSON:', JSON.stringify(updatedConversation.messages.map(m => ({
@@ -749,14 +790,14 @@ const sendToAutogen = async (content) => {
             isSelf: m.isSelf,
             timestamp: m.timestamp
         })), null, 2))
-        
+
         // 纯文本格式
-        const textFormat = updatedConversation.messages.map(m => 
+        const textFormat = updatedConversation.messages.map(m =>
             `${m.senderName}: ${m.content}`
         ).join('\n\n')
         console.log('对话文本格式:\n' + textFormat)
         console.log('===========================')
-        
+
         // 最终更新消息列表
         messageList.value = []
         updatedConversation.messages.forEach(msg => {
@@ -776,7 +817,7 @@ const sendToAutogen = async (content) => {
 
     } catch (error) {
         console.error('AutoGen发送消息失败:', error)
-        
+
         const errorMessage = {
             id: Date.now(),
             content: `[系统错误] ${error.message}`,
@@ -873,7 +914,7 @@ const sendToLLM = async (content) => {
                             if (content) {
                                 fullContent += content;
                                 replyMessage.content = fullContent;
-                                
+
                                 // 实时滚动到底部
                                 nextTick(() => {
                                     scrollToBottom();
@@ -890,7 +931,7 @@ const sendToLLM = async (content) => {
             replyMessage.status = SENDER_STATUS.IDLE;
             saveMessages();
 
-            if (isPlaying.value && fullContent) {
+            if (isPlaying.value && speechConfig.value.enabled && fullContent) {
                 await generateAndPlaySpeech(fullContent);
             }
 
@@ -917,7 +958,7 @@ const sendToLLM = async (content) => {
 const formatMCPResult = (mcpResult) => {
     const { tool, data } = mcpResult
     let formattedInfo = ''
-    
+
     switch (tool) {
         case 'weather':
             formattedInfo = `天气信息 - ${data.location}: ${data.temperature}, ${data.description}, 湿度: ${data.humidity}`
@@ -940,17 +981,21 @@ const formatMCPResult = (mcpResult) => {
         default:
             formattedInfo = JSON.stringify(data, null, 2)
     }
-    
+
     return formattedInfo
 }
 
 // 创建默认团队
-const createDefaultTeam = async () => {
+const createDefaultTeam = async (forceRecreate = false) => {
+    console.log('创建默认团队，forceRecreate:', forceRecreate)
+
     const defaultLLM = llmOptions.value.find(llm => llm.isDefault) || llmOptions.value[0]
     if (!defaultLLM) {
         console.log('没有可用的LLM配置')
         return
     }
+
+    console.log('使用的LLM配置:', { name: defaultLLM.name, hasEndpoint: !!defaultLLM.endpoint, hasApiKey: !!defaultLLM.apiKey })
 
     const teamConfig = {
         name: '默认智能体团队',
@@ -976,11 +1021,12 @@ const createDefaultTeam = async () => {
         agentTeams.value.push(team)
         currentTeam.value = team
         conversationId.value = conversation.id
-        
+
         // 保存到localStorage
         localStorage.setItem('agentTeamList', JSON.stringify(agentTeams.value))
         console.log('默认团队创建成功')
-        
+        console.log('团队智能体详情:', team.agents.map(a => ({ name: a.name, role: a.role, hasLLMConfig: !!a.llmConfig })))
+
     } catch (error) {
         console.error('创建默认团队失败:', error)
     }
@@ -995,7 +1041,7 @@ const loadAgentTeams = () => {
         if (defaultTeam) {
             currentTeam.value = defaultTeam
             conversationId.value = defaultTeam.conversationId
-            
+
             // 验证会话是否在AutoGen服务中存在
             if (defaultTeam.conversationId && !autogenService.getConversation(defaultTeam.conversationId)) {
                 console.log('发现无效的会话ID，将在下次发送消息时重新创建')
@@ -1010,7 +1056,7 @@ const ensureAutogenSession = async () => {
     if (!useAutogenMode.value || !currentTeam.value) {
         return
     }
-    
+
     // 如果没有conversationId或会话不存在，重新创建
     if (!conversationId.value || !autogenService.getConversation(conversationId.value)) {
         console.log('重新同步AutoGen会话')
@@ -1018,7 +1064,7 @@ const ensureAutogenSession = async () => {
             const teamConfig = {
                 name: currentTeam.value.name || '默认智能体团队',
                 workflowType: currentTeam.value.workflowType || 'group_chat',
-                agents: currentTeam.value.agents?.length > 0 
+                agents: currentTeam.value.agents?.length > 0
                     ? currentTeam.value.agents.map(agent => ({
                         type: agent.type || agent.role || 'analyst',
                         llmConfig: currentTeam.value.llmConfig
@@ -1028,18 +1074,18 @@ const ensureAutogenSession = async () => {
                         { type: 'researcher', llmConfig: currentTeam.value.llmConfig }
                     ]
             }
-            
+
             const conversation = await autogenService.createAgentTeam(teamConfig)
             conversationId.value = conversation.id
             currentTeam.value.conversationId = conversation.id
-            
+
             // 更新localStorage
             const teamIndex = agentTeams.value.findIndex(team => team.id === currentTeam.value.id)
             if (teamIndex >= 0) {
                 agentTeams.value[teamIndex] = currentTeam.value
                 localStorage.setItem('agentTeamList', JSON.stringify(agentTeams.value))
             }
-            
+
             console.log('AutoGen会话重新同步成功')
         } catch (error) {
             console.error('同步AutoGen会话失败:', error)
@@ -1120,9 +1166,20 @@ const openPromptsManager = () => {
     showPromptsManager.value = true
 }
 
+const openVoiceSettings = () => {
+    showVoiceSettings.value = true
+}
 
 const handlePromptSelect = (content) => {
     newMessage.value = content
+}
+
+// 更新语音设置
+const updateVoiceSettings = (newSettings) => {
+    speechConfig.value = { ...newSettings }
+    // 更新SPEECH_CONFIG引用
+    Object.assign(SPEECH_CONFIG, newSettings)
+    console.log('语音设置已更新:', newSettings)
 }
 
 // 处理更新 activeUsers 的事件
@@ -1140,8 +1197,9 @@ const confirmLLMSelection = (tempSelectedLLMId) => {
             const newAIUser = {
                 id: `llm_${selectedLLM.id}`,
                 name: selectedLLM.name,
-                avatar: '🤖',
-                status: SENDER_STATUS.IDLE
+                avatar: selectedLLM.role?.icon || '🤖',
+                status: SENDER_STATUS.IDLE,
+                role: selectedLLM.role
             };
             activeUsers.value.push(newAIUser);
             // 保存到本地存储
@@ -1184,7 +1242,7 @@ onMounted(() => {
     loadMessages()
     loadLLMOptions() // 在这里加载 LLM 选项
     loadAgentTeams() // 加载智能体团队
-    
+
     // 加载默认LLM
     const llmList = JSON.parse(localStorage.getItem('llmList') || '[]')
     const defaultLLM = llmList.find(llm => llm.isDefault)
@@ -1202,6 +1260,14 @@ onMounted(() => {
     const savedActiveUsers = localStorage.getItem('activeUsers')
     if (savedActiveUsers) {
         activeUsers.value = JSON.parse(savedActiveUsers)
+    }
+
+    // 加载语音设置
+    const savedVoiceSettings = localStorage.getItem('voiceSettings')
+    if (savedVoiceSettings) {
+        const settings = JSON.parse(savedVoiceSettings)
+        speechConfig.value = { ...speechConfig.value, ...settings }
+        Object.assign(SPEECH_CONFIG, speechConfig.value)
     }
 
     // 初始化AutoGen会话
@@ -1596,6 +1662,7 @@ input {
         padding-top: env(safe-area-inset-top);
     }
 }
+
 /* 模式切换样式 */
 .mode-switch {
     display: flex;
@@ -1724,5 +1791,4 @@ input {
     border-radius: 12px;
     border: 1px solid #bbdefb;
 }
-
 </style>

@@ -5,11 +5,16 @@
                 <span class="menu-icon"></span>
             </button>
             <span class="title">聊天</span>
-            <button class="play-button" @click="isPlaying ? stopPlayback() : togglePlayback()"
-                :title="isPlaying ? '停止播放' : '播放'" :class="{ 'is-playing': isPlaying }">
-                <span v-if="isPlaying" class="stop-icon">■</span>
-                <span v-else class="play-icon"></span>
-            </button>
+            <div class="header-controls">
+                <button class="voice-settings-button" @click="$emit('openVoiceSettings')" title="语音设置">
+                    <span class="voice-settings-icon">🎵</span>
+                </button>
+                <button class="play-button" @click="isPlaying ? stopPlayback() : togglePlayback()"
+                    :title="isPlaying ? '停止播放' : '播放'" :class="{ 'is-playing': isPlaying }">
+                    <span v-if="isPlaying" class="stop-icon">■</span>
+                    <span v-else class="play-icon"></span>
+                </button>
+            </div>
         </div>
 
         <div class="chat-content">
@@ -31,19 +36,37 @@
                             <span v-if="showDeleteBadge[user.id]" class="delete-badge"
                                 @click="deleteUser(user.id)">➖</span>
                         </div>
-                        <span class="user-name" :title="user.name">{{ formatName(user.name) }}</span>
+                        <div class="user-info">
+                            <span class="user-name" :title="user.name">{{ formatName(user.name) }}</span>
+                            <div v-if="user.role" class="user-role" :title="user.role.description">
+                                <span class="role-icon">{{ user.role.icon }}</span>
+                                <span class="role-name">{{ user.role.name }}</span>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- LLM 选择器弹出层 -->
                     <div v-if="showLLMSelector" class="llm-selector-overlay" @click.self="showLLMSelector = false">
                         <div class="llm-selector-modal">
                             <h3>选择 AI 助手</h3>
-                            <select class="llm-selector" v-model="tempSelectedLLMId" @change="handleLocalLLMSelect">
-                                <option value="" disabled>选择 LLM</option>
-                                <option v-for="llm in props.llmOptions" :key="llm.id" :value="llm.id">
-                                    {{ llm.name }}
-                                </option>
-                            </select>
+                            <div class="llm-options-list">
+                                <div v-for="llm in props.llmOptions" :key="llm.id" class="llm-option-item"
+                                    :class="{ 'selected': tempSelectedLLMId === String(llm.id) }"
+                                    @click="tempSelectedLLMId = String(llm.id)">
+                                    <div class="llm-option-header">
+                                        <div class="llm-name">{{ llm.name }}</div>
+                                        <div v-if="llm.role" class="llm-role-badge"
+                                            :style="{ backgroundColor: llm.role.color }">
+                                            {{ llm.role.icon }} {{ llm.role.name }}
+                                        </div>
+                                        <div v-else class="no-role-badge">未设置角色</div>
+                                    </div>
+                                    <div v-if="llm.role" class="llm-role-description">
+                                        {{ llm.role.description }}
+                                    </div>
+                                    <div class="llm-model-info">模型: {{ llm.model }}</div>
+                                </div>
+                            </div>
                             <div class="llm-selector-buttons">
                                 <button class="cancel-button" @click="showLLMSelector = false">取消</button>
                                 <button class="confirm-button" @click="confirmLLMSelection">确定</button>
@@ -730,6 +753,34 @@ input {
     opacity: 0.8;
 }
 
+.header-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.voice-settings-button {
+    background: none;
+    border: none;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    cursor: pointer;
+    border-radius: 50%;
+    transition: background-color 0.2s;
+}
+
+.voice-settings-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.voice-settings-icon {
+    font-size: 18px;
+}
+
 .delete-badge {
     position: absolute;
     top: 0px;
@@ -772,7 +823,7 @@ input {
     margin-left: 8px;
     display: inline-flex;
     align-items: center;
-    background: rgba(0,0,0,0.1);
+    background: rgba(0, 0, 0, 0.1);
 }
 
 .message-status.thinking {
@@ -814,13 +865,133 @@ input {
 }
 
 @keyframes message-status-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
 }
 
 @keyframes message-status-bounce {
-    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
-    40% { transform: translateY(-2px); }
-    60% { transform: translateY(-1px); }
+
+    0%,
+    20%,
+    50%,
+    80%,
+    100% {
+        transform: translateY(0);
+    }
+
+    40% {
+        transform: translateY(-2px);
+    }
+
+    60% {
+        transform: translateY(-1px);
+    }
+}
+
+/* 用户信息样式 */
+.user-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 0;
+}
+
+.user-role {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 2px;
+    padding: 1px 4px;
+    background: rgba(64, 158, 255, 0.1);
+    border-radius: 8px;
+    font-size: 10px;
+    color: #409eff;
+    max-width: 100%;
+}
+
+.user-role .role-icon {
+    font-size: 10px;
+}
+
+.user-role .role-name {
+    font-size: 9px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 40px;
+}
+
+/* LLM选择器样式增强 */
+.llm-options-list {
+    max-height: 300px;
+    overflow-y: auto;
+    margin: 15px 0;
+}
+
+.llm-option-item {
+    padding: 12px;
+    border: 2px solid #ebeef5;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.llm-option-item:hover {
+    border-color: #409eff;
+    background: #f8f9fa;
+}
+
+.llm-option-item.selected {
+    border-color: #409eff;
+    background: #e6f7ff;
+}
+
+.llm-option-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+}
+
+.llm-name {
+    font-weight: 600;
+    color: #303133;
+    flex: 1;
+}
+
+.llm-role-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 6px;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.no-role-badge {
+    color: #909399;
+    font-size: 11px;
+    font-style: italic;
+}
+
+.llm-role-description {
+    font-size: 12px;
+    color: #606266;
+    margin-bottom: 5px;
+    line-height: 1.3;
+}
+
+.llm-model-info {
+    font-size: 11px;
+    color: #909399;
 }
 </style>

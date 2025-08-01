@@ -438,7 +438,10 @@ class AutoGenService {
 
         // 根据配置创建智能体
         for (const agentConfig of teamConfig.agents) {
+            console.log('创建智能体，类型:', agentConfig.type);
             const template = this.agentTemplates[agentConfig.type] || agentConfig;
+            console.log('找到模板:', template ? { name: template.name, role: template.role } : 'null');
+
             const agent = {
                 id: uuidv4(),
                 name: template.name,
@@ -449,6 +452,7 @@ class AutoGenService {
                 llmConfig: agentConfig.llmConfig,
                 status: 'idle' // idle, thinking, speaking, waiting
             };
+            console.log('创建的智能体:', { name: agent.name, role: agent.role, hasLLMConfig: !!agent.llmConfig });
             agents.push(agent);
         }
 
@@ -946,9 +950,22 @@ class AutoGenService {
      * 群聊模式处理 (流式版本)
      */
     async handleGroupChatStream(conversation, message, onStreamUpdate) {
+        console.log('handleGroupChatStream 开始，智能体数量:', conversation.agents.length);
+        console.log('可用智能体详情:', conversation.agents.map(a => ({
+            name: a.name,
+            role: a.role,
+            hasLLMConfig: !!a.llmConfig,
+            llmConfig: a.llmConfig ? { name: a.llmConfig.name, hasEndpoint: !!a.llmConfig.endpoint } : null
+        })));
+
         // 基于消息内容和智能体能力选择最适合的智能体
         const selectedAgent = await this.selectBestAgent(conversation.agents, message);
-        if (!selectedAgent) return conversation;
+        console.log('选择的智能体:', selectedAgent ? { name: selectedAgent.name, hasLLMConfig: !!selectedAgent.llmConfig } : 'null');
+
+        if (!selectedAgent) {
+            console.error('没有选择到合适的智能体');
+            return conversation;
+        }
 
         conversation.currentSpeaker = selectedAgent.id;
         selectedAgent.status = 'thinking';
@@ -985,7 +1002,9 @@ class AutoGenService {
         }
 
         // 生成流式回复
+        console.log('开始生成智能体回复，智能体:', selectedAgent.name);
         await this.generateAgentResponseStream(selectedAgent, conversation, message, (chunk) => {
+            console.log('收到流式内容块:', chunk);
             responseMessage.content += chunk;
 
             if (onStreamUpdate) {
@@ -998,6 +1017,7 @@ class AutoGenService {
                 });
             }
         });
+        console.log('智能体回复生成完成，最终内容长度:', responseMessage.content.length);
 
         selectedAgent.status = 'idle';
         responseMessage.metadata.streaming = false;
@@ -1128,12 +1148,36 @@ class AutoGenService {
      * 根据消息内容选择最佳智能体
      */
     async selectBestAgent(agents, message) {
-        const assistantAgents = agents.filter(agent => agent.role === 'assistant');
-        if (assistantAgents.length === 0) return null;
+        console.log('selectBestAgent 开始，总智能体数量:', agents.length);
+        console.log('所有智能体的详细信息:', agents.map(a => ({ name: a.name, role: a.role, id: a.id })));
+
+        // 首先尝试找assistant类型的智能体
+        let assistantAgents = agents.filter(agent => agent.role === 'assistant');
+        console.log('助手类智能体数量:', assistantAgents.length);
+
+        // 如果没有找到assistant类型，则使用所有智能体（排除user类型）
+        if (assistantAgents.length === 0) {
+            console.warn('没有找到assistant类智能体，使用所有非user类智能体');
+            assistantAgents = agents.filter(agent => agent.role !== 'user');
+            console.log('可用智能体数量:', assistantAgents.length);
+        }
+
+        // 如果还是没有，直接使用所有智能体
+        if (assistantAgents.length === 0) {
+            console.warn('没有找到任何合适的智能体，使用所有智能体');
+            assistantAgents = agents;
+        }
+
+        if (assistantAgents.length === 0) {
+            console.error('没有任何智能体可用');
+            return null;
+        }
 
         // 使用改进的智能体选择算法
         const selectedAgent = await this.intelligentAgentSelection(assistantAgents, message);
-        return selectedAgent || assistantAgents[0];
+        const finalAgent = selectedAgent || assistantAgents[0];
+        console.log('最终选择的智能体:', finalAgent ? { name: finalAgent.name, role: finalAgent.role } : 'null');
+        return finalAgent;
     }
 
     /**

@@ -16,7 +16,27 @@
                 <input v-model="newLLM.endpoint" placeholder="API地址" type="text">
                 <input v-model="newLLM.apiKey" placeholder="API密钥" type="password">
                 <input v-model="newLLM.model" placeholder="模型名称" type="text">
-                <textarea v-model="newLLM.systemPrompt" placeholder="系统提示词" rows="4"></textarea>
+
+                <!-- 角色选择 -->
+                <div class="role-selection-field">
+                    <label class="field-label">AI角色</label>
+                    <div class="role-display" @click="showRoleSelector = true">
+                        <div v-if="newLLM.role" class="selected-role">
+                            <span class="role-icon">{{ newLLM.role.icon }}</span>
+                            <div class="role-info">
+                                <div class="role-name">{{ newLLM.role.name }}</div>
+                                <div class="role-description">{{ newLLM.role.description }}</div>
+                            </div>
+                        </div>
+                        <div v-else class="no-role-selected">
+                            <span class="placeholder-icon">🎭</span>
+                            <span class="placeholder-text">点击选择AI角色</span>
+                        </div>
+                        <span class="select-arrow">▼</span>
+                    </div>
+                </div>
+
+                <textarea v-model="newLLM.systemPrompt" placeholder="系统提示词（将根据选择的角色自动填充）" rows="4"></textarea>
                 <div class="form-buttons">
                     <button class="cancel-btn" @click="showAddForm = false">取消</button>
                     <button class="confirm-btn" @click="addLLM">确认添加</button>
@@ -62,6 +82,16 @@
                                 <div class="info-value">{{ llm.model }}</div>
                             </div>
                             <div class="info-field">
+                                <label>角色:</label>
+                                <div class="info-value role-info-display">
+                                    <span v-if="llm.role" class="role-badge"
+                                        :style="{ backgroundColor: llm.role.color }">
+                                        {{ llm.role.icon }} {{ llm.role.name }}
+                                    </span>
+                                    <span v-else class="no-role-badge">未设置角色</span>
+                                </div>
+                            </div>
+                            <div class="info-field">
                                 <label>提示词:</label>
                                 <div class="info-value">{{ llm.systemPrompt }}</div>
                             </div>
@@ -80,6 +110,23 @@
                             <div class="edit-field">
                                 <label>模型:</label>
                                 <input v-model="editingLLM.model" class="inline-edit" type="text" placeholder="模型名称">
+                            </div>
+                            <div class="edit-field">
+                                <label>角色:</label>
+                                <div class="role-edit-field">
+                                    <div class="role-display" @click="showEditRoleSelector = true">
+                                        <div v-if="editingLLM.role" class="selected-role">
+                                            <span class="role-icon">{{ editingLLM.role.icon }}</span>
+                                            <div class="role-info">
+                                                <div class="role-name">{{ editingLLM.role.name }}</div>
+                                            </div>
+                                        </div>
+                                        <div v-else class="no-role-selected">
+                                            <span class="placeholder-text">点击选择角色</span>
+                                        </div>
+                                        <span class="select-arrow">▼</span>
+                                    </div>
+                                </div>
                             </div>
                             <div class="edit-field">
                                 <label>提示词:</label>
@@ -113,12 +160,24 @@
         <button class="add-button" @click="showAddForm = !showAddForm">
             {{ showAddForm ? '取消' : '添加 LLM' }}
         </button>
+
+        <!-- 角色选择器弹窗 -->
+        <div v-if="showRoleSelector || showEditRoleSelector" class="role-selector-overlay"
+            @click.self="closeRoleSelector">
+            <div class="role-selector-container">
+                <RoleSelector :current-role="showRoleSelector ? newLLM.role : editingLLM?.role"
+                    :llm-config="showRoleSelector ? newLLM : editingLLM" @select="handleRoleSelect"
+                    @cancel="closeRoleSelector" />
+            </div>
+        </div>
     </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import RoleSelector from './RoleSelector.vue'
+import { roleTemplateService } from '../services/roleTemplateService.js'
 
 const emit = defineEmits(['updateLLMOptions'])
 
@@ -131,11 +190,14 @@ const newLLM = ref({
     endpoint: '',
     apiKey: '',
     model: '',
-    systemPrompt: ''
+    systemPrompt: '',
+    role: null
 })
 
 const showEditForm = ref(false)
 const editingLLM = ref(null)
+const showRoleSelector = ref(false)
+const showEditRoleSelector = ref(false)
 
 // 默认LLM配置
 const defaultLLMConfig = JSON.parse(import.meta.env.VITE_DEFAULT_LLM_CONFIG || '[]')
@@ -182,7 +244,8 @@ const addLLM = () => {
         endpoint: '',
         apiKey: '',
         model: '',
-        systemPrompt: ''
+        systemPrompt: '',
+        role: null
     }
     showAddForm.value = false
     saveLLMs()
@@ -211,6 +274,10 @@ const startEdit = (llm) => {
     } else {
         // 开始编辑新的项
         editingLLM.value = { ...llm }
+        // 确保角色对象完整
+        if (editingLLM.value.role && typeof editingLLM.value.role === 'string') {
+            editingLLM.value.role = roleTemplateService.getRoleById(editingLLM.value.role)
+        }
         // 确保展开当前项
         expandedItems.value.add(llm.id)
     }
@@ -276,6 +343,30 @@ const toggleExpand = (id) => {
     } else {
         expandedItems.value.add(id)
     }
+}
+
+// 处理角色选择
+const handleRoleSelect = (role) => {
+    if (showRoleSelector.value) {
+        newLLM.value.role = role
+        // 如果没有系统提示词或系统提示词为空，使用角色的系统提示词
+        if (!newLLM.value.systemPrompt || newLLM.value.systemPrompt.trim() === '') {
+            newLLM.value.systemPrompt = role.systemPrompt
+        }
+    } else if (showEditRoleSelector.value && editingLLM.value) {
+        editingLLM.value.role = role
+        // 如果没有系统提示词或系统提示词为空，使用角色的系统提示词
+        if (!editingLLM.value.systemPrompt || editingLLM.value.systemPrompt.trim() === '') {
+            editingLLM.value.systemPrompt = role.systemPrompt
+        }
+    }
+    closeRoleSelector()
+}
+
+// 关闭角色选择器
+const closeRoleSelector = () => {
+    showRoleSelector.value = false
+    showEditRoleSelector.value = false
 }
 
 onMounted(() => {
@@ -555,5 +646,146 @@ button:active {
 .delete-icon,
 .toggle-icon {
     font-size: 16px;
+}
+
+/* 角色选择相关样式 */
+.role-selection-field {
+    margin-bottom: 12px;
+}
+
+.field-label {
+    display: block;
+    margin-bottom: 6px;
+    color: #606266;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.role-display {
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    background: #fff;
+    cursor: pointer;
+    transition: all 0.3s;
+    min-height: 44px;
+}
+
+.role-display:hover {
+    border-color: #409eff;
+}
+
+.selected-role {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+}
+
+.role-icon {
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.role-info {
+    flex: 1;
+}
+
+.role-name {
+    font-weight: 500;
+    color: #303133;
+    font-size: 14px;
+    margin-bottom: 2px;
+}
+
+.role-description {
+    font-size: 12px;
+    color: #909399;
+    line-height: 1.3;
+}
+
+.no-role-selected {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    color: #c0c4cc;
+}
+
+.placeholder-icon {
+    font-size: 18px;
+}
+
+.placeholder-text {
+    font-size: 13px;
+}
+
+.select-arrow {
+    color: #c0c4cc;
+    font-size: 12px;
+    margin-left: 8px;
+}
+
+/* 角色选择器弹窗样式 */
+.role-selector-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.role-selector-container {
+    max-width: 90vw;
+    max-height: 90vh;
+    overflow: auto;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* 角色信息显示样式 */
+.role-info-display {
+    display: flex;
+    align-items: center;
+}
+
+.role-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.no-role-badge {
+    color: #909399;
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* 角色编辑字段样式 */
+.role-edit-field {
+    width: 100%;
+}
+
+.role-edit-field .role-display {
+    margin: 0;
+}
+
+.role-edit-field .selected-role .role-info {
+    margin: 0;
+}
+
+.role-edit-field .role-name {
+    margin-bottom: 0;
 }
 </style>
