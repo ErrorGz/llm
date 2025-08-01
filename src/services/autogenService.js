@@ -8,6 +8,36 @@ class AutoGenService {
         this.activeConversations = new Map();
         this.agentTemplates = this.getDefaultAgentTemplates();
         this.workflowTemplates = this.getWorkflowTemplates();
+        
+        // 初始化智能体记忆系统
+        this.agentMemorySystem = new AgentMemorySystem();
+        
+        // 初始化智能体协作引擎
+        this.collaborationEngine = new AgentCollaborationEngine(this);
+        
+        // 初始化任务进度跟踪器
+        this.progressTracker = new TaskProgressTracker(this);
+    }
+
+    /**
+     * 获取智能体记忆系统实例
+     */
+    getMemorySystem() {
+        return this.agentMemorySystem;
+    }
+
+    /**
+     * 获取智能体协作引擎实例
+     */
+    getCollaborationEngine() {
+        return this.collaborationEngine;
+    }
+
+    /**
+     * 获取任务进度跟踪器实例
+     */
+    getProgressTracker() {
+        return this.progressTracker;
     }
 
     /**
@@ -1186,11 +1216,48 @@ class AutoGenService {
      */
     async generateAgentResponse(agent, conversation, originalMessage) {
         try {
-            // 构建上下文消息
+            // 获取智能体记忆系统
+            const memorySystem = this.agentMemorySystem;
+            const knowledgeBase = memorySystem.getOrCreateKnowledgeBase(agent.id);
+
+            // 从知识库搜索相关知识
+            const relatedKnowledge = knowledgeBase.searchKnowledge(originalMessage);
+
+            // 构建上下文消息，包括知识库信息
             const contextMessages = this.buildContextMessages(agent, conversation);
+
+            // 如果有相关知识，添加到上下文
+            if (relatedKnowledge.length > 0) {
+                contextMessages.push({
+                    role: 'system',
+                    content: `相关知识库信息：${JSON.stringify(relatedKnowledge)}`
+                });
+            }
 
             // 调用LLM生成回复
             const response = await this.callLLM(agent.llmConfig, contextMessages);
+
+            // 记录对话历史
+            memorySystem.recordConversation(agent.id, conversation);
+
+            // 记录经验
+            memorySystem.recordExperience(agent.id, 'response_generation', {
+                messageLength: originalMessage.length,
+                responseLength: response.content.length,
+                model: agent.llmConfig.model
+            });
+
+            // 尝试学习用户偏好（这里需要一个用户ID，暂时使用固定值）
+            memorySystem.learnUserPreferences(agent.id, 'default_user', {
+                'message_style': this.detectMessageStyle(originalMessage),
+                'topic_preference': this.detectTopicPreference(originalMessage)
+            });
+
+            // 将新知识添加到知识库
+            knowledgeBase.addKnowledge('conversation', {
+                originalMessage: originalMessage,
+                response: response.content
+            });
 
             return {
                 content: response.content,
@@ -1214,17 +1281,98 @@ class AutoGenService {
      */
     async generateAgentResponseStream(agent, conversation, originalMessage, onChunk) {
         try {
-            // 构建上下文消息
+            // 获取智能体记忆系统
+            const memorySystem = this.agentMemorySystem;
+            const knowledgeBase = memorySystem.getOrCreateKnowledgeBase(agent.id);
+
+            // 从知识库搜索相关知识
+            const relatedKnowledge = knowledgeBase.searchKnowledge(originalMessage);
+
+            // 构建上下文消息，包括知识库信息
             const contextMessages = this.buildContextMessages(agent, conversation);
 
+            // 如果有相关知识，添加到上下文
+            if (relatedKnowledge.length > 0) {
+                contextMessages.push({
+                    role: 'system',
+                    content: `相关知识库信息：${JSON.stringify(relatedKnowledge)}`
+                });
+            }
+
+            // 记录对话历史
+            memorySystem.recordConversation(agent.id, conversation);
+
             // 调用LLM生成流式回复
-            await this.callLLMStream(agent.llmConfig, contextMessages, onChunk);
+            let fullResponse = '';
+            await this.callLLMStream(agent.llmConfig, contextMessages, (chunk) => {
+                fullResponse += chunk;
+                onChunk(chunk);
+            });
+
+            // 记录经验
+            memorySystem.recordExperience(agent.id, 'response_generation', {
+                messageLength: originalMessage.length,
+                responseLength: fullResponse.length,
+                model: agent.llmConfig.model
+            });
+
+            // 尝试学习用户偏好（这里需要一个用户ID，暂时使用固定值）
+            memorySystem.learnUserPreferences(agent.id, 'default_user', {
+                'message_style': this.detectMessageStyle(originalMessage),
+                'topic_preference': this.detectTopicPreference(originalMessage)
+            });
+
+            // 将新知识添加到知识库
+            knowledgeBase.addKnowledge('conversation', {
+                originalMessage: originalMessage,
+                response: fullResponse
+            });
 
         } catch (error) {
             console.error('生成智能体流式回复失败:', error);
-            const errorMsg = `[${agent.name}] 抱歉，我在处理您的请求时遇到了问题。错误信息：${error.message}`;
-            onChunk(errorMsg);
+            onChunk(`[${agent.name}] 抱歉，我在处理您的请求时遇到了问题。错误信息：${error.message}`);
         }
+    }
+
+    /**
+     * 检测消息风格
+     */
+    detectMessageStyle(message) {
+        const styles = {
+            'formal': ['请', '希望', '建议', '方案'],
+            'casual': ['啊', '呢', '吧', '哦'],
+            'technical': ['算法', '架构', '系统', '技术'],
+            'creative': ['想象', '创意', '设计', '灵感']
+        };
+
+        for (const [style, keywords] of Object.entries(styles)) {
+            if (keywords.some(keyword => message.includes(keyword))) {
+                return style;
+            }
+        }
+
+        return 'neutral';
+    }
+
+    /**
+     * 检测话题偏好
+     */
+    detectTopicPreference(message) {
+        const topics = {
+            'technology': ['技术', '编程', '算法', '系统'],
+            'business': ['商业', '策略', '市场', '投资'],
+            'creative': ['设计', '创意', '艺术', '灵感'],
+            'science': ['研究', '数据', '分析', '实验'],
+            'personal': ['生活', '感受', '经历', '想法']
+        };
+
+        for (const [topic, keywords] of Object.entries(topics)) {
+            if (keywords.some(keyword => message.includes(keyword))) {
+                return topic;
+            }
+        }
+
+        return 'general';
     }
 
     /**
@@ -1354,6 +1502,1340 @@ class AutoGenService {
      */
     getActiveConversations() {
         return Array.from(this.activeConversations.values());
+    }
+}
+
+/**
+ * 智能体记忆系统
+ * 管理每个智能体的知识库、对话历史和学习能力
+ */
+class AgentMemorySystem {
+    constructor() {
+        // 知识库存储
+        this.knowledgeBase = new Map();
+
+        // 对话历史存储
+        this.conversationHistories = new Map();
+
+        // 用户偏好存储
+        this.userPreferences = new Map();
+
+        // 经验积累记录
+        this.experienceLog = new Map();
+    }
+
+    /**
+     * 为智能体创建或获取知识库
+     * @param {string} agentId 智能体唯一标识
+     * @returns {AgentKnowledgeBase} 智能体知识库
+     */
+    getOrCreateKnowledgeBase(agentId) {
+        if (!this.knowledgeBase.has(agentId)) {
+            this.knowledgeBase.set(agentId, new AgentKnowledgeBase(agentId));
+        }
+        return this.knowledgeBase.get(agentId);
+    }
+
+    /**
+     * 记录对话历史
+     * @param {string} agentId 智能体ID
+     * @param {Object} conversation 对话记录
+     */
+    recordConversation(agentId, conversation) {
+        if (!this.conversationHistories.has(agentId)) {
+            this.conversationHistories.set(agentId, []);
+        }
+        this.conversationHistories.get(agentId).push({
+            timestamp: Date.now(),
+            conversation: conversation
+        });
+
+        // 限制历史记录数量，防止内存过大
+        const MAX_HISTORY_LENGTH = 100;
+        const histories = this.conversationHistories.get(agentId);
+        if (histories.length > MAX_HISTORY_LENGTH) {
+            histories.shift(); // 移除最早的记录
+        }
+    }
+
+    /**
+     * 学习用户偏好
+     * @param {string} agentId 智能体ID
+     * @param {string} userId 用户ID
+     * @param {Object} preferences 用户偏好数据
+     */
+    learnUserPreferences(agentId, userId, preferences) {
+        if (!this.userPreferences.has(agentId)) {
+            this.userPreferences.set(agentId, new Map());
+        }
+        const agentPreferences = this.userPreferences.get(agentId);
+
+        for (const [key, value] of Object.entries(preferences)) {
+            if (!agentPreferences.has(key)) {
+                agentPreferences.set(key, []);
+            }
+            const preferenceList = agentPreferences.get(key);
+            preferenceList.push(value);
+
+            // 保留最近的5个偏好记录
+            if (preferenceList.length > 5) {
+                preferenceList.shift();
+            }
+        }
+    }
+
+    /**
+     * 获取用户偏好
+     * @param {string} agentId 智能体ID
+     * @param {string} userId 用户ID
+     * @param {string} preferenceKey 偏好键
+     * @returns {Array} 用户偏好列表
+     */
+    getUserPreferences(agentId, userId, preferenceKey) {
+        const agentPreferences = this.userPreferences.get(agentId);
+        return agentPreferences ? agentPreferences.get(preferenceKey) || [] : [];
+    }
+
+    /**
+     * 记录智能体经验
+     * @param {string} agentId 智能体ID
+     * @param {string} experienceType 经验类型
+     * @param {Object} experienceData 经验数据
+     */
+    recordExperience(agentId, experienceType, experienceData) {
+        if (!this.experienceLog.has(agentId)) {
+            this.experienceLog.set(agentId, new Map());
+        }
+        const agentExperience = this.experienceLog.get(agentId);
+
+        if (!agentExperience.has(experienceType)) {
+            agentExperience.set(experienceType, []);
+        }
+
+        const experiences = agentExperience.get(experienceType);
+        experiences.push({
+            timestamp: Date.now(),
+            data: experienceData
+        });
+
+        // 限制经验记录数量
+        const MAX_EXPERIENCE_LENGTH = 50;
+        if (experiences.length > MAX_EXPERIENCE_LENGTH) {
+            experiences.shift();
+        }
+    }
+
+    /**
+     * 获取智能体经验
+     * @param {string} agentId 智能体ID
+     * @param {string} experienceType 经验类型
+     * @returns {Array} 经验记录列表
+     */
+    getExperiences(agentId, experienceType) {
+        const agentExperience = this.experienceLog.get(agentId);
+        return agentExperience ? agentExperience.get(experienceType) || [] : [];
+    }
+
+    /**
+     * 分析智能体性能
+     * @param {string} agentId 智能体ID
+     * @returns {Object} 性能分析报告
+     */
+    analyzeAgentPerformance(agentId) {
+        const conversations = this.conversationHistories.get(agentId) || [];
+        const experiences = this.experienceLog.get(agentId) || new Map();
+
+        return {
+            totalConversations: conversations.length,
+            experienceTypes: Array.from(experiences.keys()),
+            lastConversationTimestamp: conversations.length > 0
+                ? conversations[conversations.length - 1].timestamp
+                : null
+        };
+    }
+}
+
+/**
+ * 智能体知识库
+ * 管理特定智能体的专业知识
+ */
+class AgentKnowledgeBase {
+    constructor(agentId) {
+        this.agentId = agentId;
+        this.knowledgeEntries = new Map();
+    }
+
+    /**
+     * 添加知识条目
+     * @param {string} category 知识类别
+     * @param {Object} knowledge 知识内容
+     */
+    addKnowledge(category, knowledge) {
+        if (!this.knowledgeEntries.has(category)) {
+            this.knowledgeEntries.set(category, []);
+        }
+
+        const entries = this.knowledgeEntries.get(category);
+        entries.push({
+            timestamp: Date.now(),
+            data: knowledge
+        });
+
+        // 限制每个类别的知识条目数量
+        const MAX_ENTRIES_PER_CATEGORY = 20;
+        if (entries.length > MAX_ENTRIES_PER_CATEGORY) {
+            entries.shift();
+        }
+    }
+
+    /**
+     * 获取特定类别的知识
+     * @param {string} category 知识类别
+     * @returns {Array} 知识条目列表
+     */
+    getKnowledge(category) {
+        return this.knowledgeEntries.get(category) || [];
+    }
+
+    /**
+     * 搜索知识
+     * @param {string} query 搜索关键词
+     * @returns {Array} 匹配的知识条目
+     */
+    searchKnowledge(query) {
+        const results = [];
+        for (const [category, entries] of this.knowledgeEntries) {
+            const matchedEntries = entries.filter(entry =>
+                JSON.stringify(entry.data).includes(query)
+            );
+            results.push(...matchedEntries);
+        }
+        return results;
+    }
+}
+
+/**
+ * 智能体协作引擎
+ * 管理智能体间的协作、讨论和共识达成
+ */
+class AgentCollaborationEngine {
+    constructor(autogenService) {
+        this.autogenService = autogenService;
+        this.activeDiscussions = new Map();
+        this.consensusHistory = new Map();
+    }
+
+    /**
+     * 启动智能体协作讨论
+     * @param {Object} conversation 会话对象
+     * @param {string} topic 讨论主题
+     * @param {Array} participatingAgents 参与讨论的智能体
+     * @param {Function} onUpdate 更新回调
+     */
+    async startCollaboration(conversation, topic, participatingAgents, onUpdate) {
+        const discussionId = `discussion_${Date.now()}`;
+        
+        const discussion = {
+            id: discussionId,
+            topic: topic,
+            participants: participatingAgents,
+            phases: ['initial_positions', 'debate', 'consensus_building', 'finalization'],
+            currentPhase: 'initial_positions',
+            positions: new Map(),
+            arguments: [],
+            consensus: null,
+            startTime: Date.now()
+        };
+
+        this.activeDiscussions.set(discussionId, discussion);
+
+        try {
+            // 第一阶段：收集初始观点
+            await this.collectInitialPositions(discussion, conversation, onUpdate);
+            
+            // 第二阶段：展开辩论
+            await this.conductDebate(discussion, conversation, onUpdate);
+            
+            // 第三阶段：建立共识
+            await this.buildConsensus(discussion, conversation, onUpdate);
+            
+            // 第四阶段：最终化结果
+            await this.finalizeResults(discussion, conversation, onUpdate);
+
+            return discussion.consensus;
+        } catch (error) {
+            console.error('智能体协作失败:', error);
+            if (onUpdate) {
+                onUpdate({
+                    type: 'collaboration_error',
+                    error: error.message,
+                    discussion
+                });
+            }
+        } finally {
+            this.activeDiscussions.delete(discussionId);
+        }
+    }
+
+    /**
+     * 收集初始观点
+     */
+    async collectInitialPositions(discussion, conversation, onUpdate) {
+        discussion.currentPhase = 'initial_positions';
+        
+        if (onUpdate) {
+            onUpdate({
+                type: 'phase_start',
+                phase: 'initial_positions',
+                description: '正在收集各智能体的初始观点...',
+                discussion
+            });
+        }
+
+        for (const agent of discussion.participants) {
+            try {
+                const position = await this.requestInitialPosition(agent, discussion.topic, conversation);
+                discussion.positions.set(agent.id, position);
+
+                if (onUpdate) {
+                    onUpdate({
+                        type: 'position_collected',
+                        agent: agent,
+                        position: position,
+                        discussion
+                    });
+                }
+
+                // 短暂延迟以模拟思考时间
+                await this.delay(1000);
+            } catch (error) {
+                console.error(`收集${agent.name}观点失败:`, error);
+            }
+        }
+    }
+
+    /**
+     * 展开辩论
+     */
+    async conductDebate(discussion, conversation, onUpdate) {
+        discussion.currentPhase = 'debate';
+        
+        if (onUpdate) {
+            onUpdate({
+                type: 'phase_start',
+                phase: 'debate',
+                description: '智能体开始就不同观点进行讨论...',
+                discussion
+            });
+        }
+
+        // 分析观点分歧
+        const conflicts = this.analyzeConflicts(discussion.positions);
+        
+        // 针对每个冲突点进行讨论
+        for (const conflict of conflicts) {
+            const debateRounds = await this.conductConflictDebate(conflict, discussion, conversation);
+            discussion.arguments.push(...debateRounds);
+
+            if (onUpdate) {
+                onUpdate({
+                    type: 'debate_round',
+                    conflict: conflict,
+                    arguments: debateRounds,
+                    discussion
+                });
+            }
+        }
+    }
+
+    /**
+     * 建立共识
+     */
+    async buildConsensus(discussion, conversation, onUpdate) {
+        discussion.currentPhase = 'consensus_building';
+        
+        if (onUpdate) {
+            onUpdate({
+                type: 'phase_start',
+                phase: 'consensus_building',
+                description: '智能体正在寻求共识...',
+                discussion
+            });
+        }
+
+        // 让协调员分析所有观点和争论，提出综合方案
+        const coordinator = discussion.participants.find(agent => 
+            agent.capabilities && agent.capabilities.includes('coordination')
+        );
+
+        if (coordinator) {
+            const consensusProposal = await this.generateConsensusProposal(
+                coordinator, discussion, conversation
+            );
+
+            // 让所有参与者评估共识方案
+            const evaluations = await this.evaluateConsensus(
+                discussion.participants, consensusProposal, conversation
+            );
+
+            discussion.consensus = {
+                proposal: consensusProposal,
+                evaluations: evaluations,
+                finalVersion: await this.refineConsensus(consensusProposal, evaluations, coordinator, conversation)
+            };
+
+            if (onUpdate) {
+                onUpdate({
+                    type: 'consensus_reached',
+                    consensus: discussion.consensus,
+                    discussion
+                });
+            }
+        }
+    }
+
+    /**
+     * 最终化结果
+     */
+    async finalizeResults(discussion, conversation, onUpdate) {
+        discussion.currentPhase = 'finalization';
+        
+        // 记录共识历史
+        this.consensusHistory.set(discussion.id, {
+            topic: discussion.topic,
+            participants: discussion.participants.map(a => a.name),
+            consensus: discussion.consensus,
+            timestamp: Date.now(),
+            duration: Date.now() - discussion.startTime
+        });
+
+        if (onUpdate) {
+            onUpdate({
+                type: 'collaboration_complete',
+                finalResult: discussion.consensus.finalVersion,
+                discussion
+            });
+        }
+    }
+
+    /**
+     * 请求智能体初始观点
+     */
+    async requestInitialPosition(agent, topic, conversation) {
+        const prompt = `作为${agent.name}，请就以下主题提出你的专业观点：
+
+主题：${topic}
+
+请提供：
+1. 你的立场和观点
+2. 支持你观点的理由
+3. 可能的实施建议
+4. 预期的风险或挑战
+
+请保持你的专业角色特色，提供建设性的意见。`;
+
+        try {
+            const contextMessages = [
+                {
+                    role: 'system',
+                    content: agent.systemPrompt + '\n\n你正在参与一个专业讨论。'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ];
+
+            const response = await this.autogenService.callLLM(agent.llmConfig, contextMessages);
+            return {
+                content: response.content,
+                timestamp: Date.now(),
+                confidence: this.extractConfidence(response.content)
+            };
+        } catch (error) {
+            console.error(`获取${agent.name}观点失败:`, error);
+            return {
+                content: `作为${agent.name}，我在思考这个问题时遇到了困难。`,
+                timestamp: Date.now(),
+                confidence: 0.1
+            };
+        }
+    }
+
+    /**
+     * 分析观点冲突
+     */
+    analyzeConflicts(positions) {
+        const conflicts = [];
+        const positionArray = Array.from(positions.entries());
+
+        for (let i = 0; i < positionArray.length; i++) {
+            for (let j = i + 1; j < positionArray.length; j++) {
+                const [agentId1, position1] = positionArray[i];
+                const [agentId2, position2] = positionArray[j];
+
+                // 简单的冲突检测逻辑（实际中可以更复杂）
+                const conflictScore = this.calculateConflictScore(position1.content, position2.content);
+                
+                if (conflictScore > 0.3) { // 阈值可调整
+                    conflicts.push({
+                        agents: [agentId1, agentId2],
+                        positions: [position1, position2],
+                        conflictScore: conflictScore,
+                        conflictAreas: this.identifyConflictAreas(position1.content, position2.content)
+                    });
+                }
+            }
+        }
+
+        return conflicts;
+    }
+
+    /**
+     * 计算冲突分数
+     */
+    calculateConflictScore(content1, content2) {
+        // 简化的冲突检测：寻找对立关键词
+        const oppositeWords = [
+            ['支持', '反对'],
+            ['同意', '不同意'],
+            ['可行', '不可行'],
+            ['建议', '不建议'],
+            ['优势', '劣势'],
+            ['有效', '无效']
+        ];
+
+        let conflictCount = 0;
+        for (const [word1, word2] of oppositeWords) {
+            if ((content1.includes(word1) && content2.includes(word2)) ||
+                (content1.includes(word2) && content2.includes(word1))) {
+                conflictCount++;
+            }
+        }
+
+        return Math.min(conflictCount / oppositeWords.length, 1.0);
+    }
+
+    /**
+     * 识别冲突领域
+     */
+    identifyConflictAreas(content1, content2) {
+        const areas = ['技术实现', '成本效益', '时间安排', '风险评估', '用户体验'];
+        const conflictAreas = [];
+
+        for (const area of areas) {
+            if (content1.includes(area) && content2.includes(area)) {
+                conflictAreas.push(area);
+            }
+        }
+
+        return conflictAreas;
+    }
+
+    /**
+     * 针对冲突进行辩论
+     */
+    async conductConflictDebate(conflict, discussion, conversation) {
+        const debateRounds = [];
+        const maxRounds = 3; // 限制辩论轮数
+
+        for (let round = 1; round <= maxRounds; round++) {
+            for (const agentId of conflict.agents) {
+                const agent = discussion.participants.find(a => a.id === agentId);
+                if (!agent) continue;
+
+                const otherAgentId = conflict.agents.find(id => id !== agentId);
+                const otherAgent = discussion.participants.find(a => a.id === otherAgentId);
+
+                const argument = await this.generateArgument(agent, otherAgent, conflict, round, conversation);
+                
+                debateRounds.push({
+                    round: round,
+                    agent: agent,
+                    argument: argument,
+                    timestamp: Date.now()
+                });
+
+                await this.delay(800); // 短暂延迟
+            }
+        }
+
+        return debateRounds;
+    }
+
+    /**
+     * 生成辩论论据
+     */
+    async generateArgument(agent, otherAgent, conflict, round, conversation) {
+        const prompt = `作为${agent.name}，你正在与${otherAgent.name}就以下问题进行专业讨论：
+
+冲突点：${conflict.conflictAreas.join(', ')}
+
+${otherAgent.name}的观点：
+${conflict.positions.find(p => p === conflict.positions[1]).content}
+
+这是第${round}轮讨论。请：
+1. 针对对方观点提出你的专业意见
+2. 提供具体的论据支持你的立场
+3. 保持专业和建设性的态度
+4. 寻找可能的妥协或改进方案
+
+请简洁明了地表达你的观点。`;
+
+        try {
+            const contextMessages = [
+                {
+                    role: 'system',
+                    content: agent.systemPrompt + '\n\n你正在进行专业辩论，保持客观和建设性。'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ];
+
+            const response = await this.autogenService.callLLM(agent.llmConfig, contextMessages);
+            return response.content;
+        } catch (error) {
+            return `作为${agent.name}，我需要更多时间来完善我的论据。`;
+        }
+    }
+
+    /**
+     * 生成共识提案
+     */
+    async generateConsensusProposal(coordinator, discussion, conversation) {
+        const allPositions = Array.from(discussion.positions.values()).map(p => p.content).join('\n\n');
+        const allArguments = discussion.arguments.map(arg => 
+            `${arg.agent.name}: ${arg.argument}`
+        ).join('\n\n');
+
+        const prompt = `作为${coordinator.name}，请基于以下所有观点和讨论，提出一个综合的共识方案：
+
+初始观点：
+${allPositions}
+
+讨论内容：
+${allArguments}
+
+请提供：
+1. 综合各方观点的平衡方案
+2. 具体的实施建议
+3. 风险缓解措施
+4. 成功指标和评估方法
+
+确保方案考虑到所有参与者的关切和专业建议。`;
+
+        try {
+            const contextMessages = [
+                {
+                    role: 'system',
+                    content: coordinator.systemPrompt + '\n\n你的任务是整合所有观点，形成可执行的共识方案。'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ];
+
+            const response = await this.autogenService.callLLM(coordinator.llmConfig, contextMessages);
+            return response.content;
+        } catch (error) {
+            return '在整合各方观点时遇到困难，需要进一步讨论。';
+        }
+    }
+
+    /**
+     * 评估共识方案
+     */
+    async evaluateConsensus(participants, consensusProposal, conversation) {
+        const evaluations = [];
+
+        for (const agent of participants) {
+            if (agent.capabilities && agent.capabilities.includes('coordination')) {
+                continue; // 跳过协调员
+            }
+
+            const evaluation = await this.getAgentEvaluation(agent, consensusProposal, conversation);
+            evaluations.push({
+                agent: agent,
+                evaluation: evaluation,
+                timestamp: Date.now()
+            });
+        }
+
+        return evaluations;
+    }
+
+    /**
+     * 获取智能体对共识的评估
+     */
+    async getAgentEvaluation(agent, consensusProposal, conversation) {
+        const prompt = `作为${agent.name}，请评估以下共识方案：
+
+共识方案：
+${consensusProposal}
+
+请提供：
+1. 你对此方案的整体评价（1-10分）
+2. 你认为的优点
+3. 你担心的问题或风险
+4. 改进建议
+
+请保持客观和专业。`;
+
+        try {
+            const contextMessages = [
+                {
+                    role: 'system',
+                    content: agent.systemPrompt + '\n\n请客观评估这个共识方案。'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ];
+
+            const response = await this.autogenService.callLLM(agent.llmConfig, contextMessages);
+            return {
+                content: response.content,
+                score: this.extractScore(response.content)
+            };
+        } catch (error) {
+            return {
+                content: `作为${agent.name}，我需要更多时间来评估这个方案。`,
+                score: 5
+            };
+        }
+    }
+
+    /**
+     * 完善共识方案
+     */
+    async refineConsensus(consensusProposal, evaluations, coordinator, conversation) {
+        const feedback = evaluations.map(evaluation => 
+            `${evaluation.agent.name}的评估：${evaluation.evaluation.content}`
+        ).join('\n\n');
+
+        const prompt = `请基于以下反馈完善共识方案：
+
+原方案：
+${consensusProposal}
+
+反馈意见：
+${feedback}
+
+请提供最终的完善版本，确保：
+1. 解决主要关切
+2. 保持方案的可执行性
+3. 平衡各方利益
+4. 明确实施步骤`;
+
+        try {
+            const contextMessages = [
+                {
+                    role: 'system',
+                    content: coordinator.systemPrompt + '\n\n基于反馈完善方案，确保最终方案的质量和可行性。'
+                },
+                {
+                    role: 'user',
+                    content: prompt
+                }
+            ];
+
+            const response = await this.autogenService.callLLM(coordinator.llmConfig, contextMessages);
+            return response.content;
+        } catch (error) {
+            return consensusProposal; // 如果完善失败，返回原方案
+        }
+    }
+
+    /**
+     * 提取置信度
+     */
+    extractConfidence(content) {
+        // 简单的置信度检测
+        const highConfidenceWords = ['确信', '肯定', '明确', '强烈建议'];
+        const lowConfidenceWords = ['可能', '或许', '建议考虑', '不确定'];
+
+        let confidence = 0.5; // 默认中等置信度
+
+        for (const word of highConfidenceWords) {
+            if (content.includes(word)) {
+                confidence += 0.1;
+            }
+        }
+
+        for (const word of lowConfidenceWords) {
+            if (content.includes(word)) {
+                confidence -= 0.1;
+            }
+        }
+
+        return Math.max(0.1, Math.min(1.0, confidence));
+    }
+
+    /**
+     * 提取评分
+     */
+    extractScore(content) {
+        const scoreMatch = content.match(/(\d+)分/);
+        if (scoreMatch) {
+            return parseInt(scoreMatch[1]);
+        }
+
+        // 如果没有明确分数，根据情感倾向估算
+        const positiveWords = ['优秀', '很好', '满意', '赞同'];
+        const negativeWords = ['差', '不好', '担心', '反对'];
+
+        let score = 5; // 默认中性分数
+
+        for (const word of positiveWords) {
+            if (content.includes(word)) score += 1;
+        }
+
+        for (const word of negativeWords) {
+            if (content.includes(word)) score -= 1;
+        }
+
+        return Math.max(1, Math.min(10, score));
+    }
+
+    /**
+     * 延迟函数
+     */
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+}
+
+/**
+ * 任务进度跟踪器
+ * 管理多步骤任务的进度跟踪、断点续传和可视化显示
+ */
+class TaskProgressTracker {
+    constructor(autogenService) {
+        this.autogenService = autogenService;
+        this.activeTasks = new Map();
+        this.taskHistory = new Map();
+        this.checkpoints = new Map();
+    }
+
+    /**
+     * 创建新任务并开始跟踪
+     * @param {Object} taskConfig 任务配置
+     * @returns {string} 任务ID
+     */
+    createTask(taskConfig) {
+        const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        const task = {
+            id: taskId,
+            name: taskConfig.name || '未命名任务',
+            description: taskConfig.description || '',
+            type: taskConfig.type || 'general', // general, workflow, collaboration
+            phases: taskConfig.phases || [],
+            currentPhase: 0,
+            status: 'pending', // pending, running, paused, completed, failed
+            progress: 0, // 0-100
+            startTime: Date.now(),
+            endTime: null,
+            estimatedDuration: taskConfig.estimatedDuration || null,
+            assignedAgents: taskConfig.assignedAgents || [],
+            steps: [],
+            checkpoints: [],
+            metadata: taskConfig.metadata || {}
+        };
+
+        this.activeTasks.set(taskId, task);
+        return taskId;
+    }
+
+    /**
+     * 开始执行任务
+     * @param {string} taskId 任务ID
+     * @param {Function} onUpdate 进度更新回调
+     */
+    async startTask(taskId, onUpdate = null) {
+        const task = this.activeTasks.get(taskId);
+        if (!task) {
+            throw new Error('任务不存在');
+        }
+
+        task.status = 'running';
+        task.startTime = Date.now();
+
+        if (onUpdate) {
+            onUpdate({
+                type: 'task_started',
+                task: task,
+                timestamp: Date.now()
+            });
+        }
+
+        try {
+            // 根据任务类型执行不同的处理逻辑
+            switch (task.type) {
+                case 'workflow':
+                    await this.executeWorkflowTask(task, onUpdate);
+                    break;
+                case 'collaboration':
+                    await this.executeCollaborationTask(task, onUpdate);
+                    break;
+                default:
+                    await this.executeGeneralTask(task, onUpdate);
+            }
+
+            task.status = 'completed';
+            task.endTime = Date.now();
+            task.progress = 100;
+
+            if (onUpdate) {
+                onUpdate({
+                    type: 'task_completed',
+                    task: task,
+                    timestamp: Date.now()
+                });
+            }
+
+        } catch (error) {
+            task.status = 'failed';
+            task.endTime = Date.now();
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'task_failed',
+                    task: task,
+                    error: error.message,
+                    timestamp: Date.now()
+                });
+            }
+            
+            throw error;
+        }
+    }
+
+    /**
+     * 执行工作流任务
+     */
+    async executeWorkflowTask(task, onUpdate) {
+        for (let i = 0; i < task.phases.length; i++) {
+            const phase = task.phases[i];
+            task.currentPhase = i;
+            
+            await this.executePhase(task, phase, i, onUpdate);
+            
+            // 更新进度
+            task.progress = Math.round(((i + 1) / task.phases.length) * 100);
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'phase_completed',
+                    task: task,
+                    phase: phase,
+                    phaseIndex: i,
+                    progress: task.progress,
+                    timestamp: Date.now()
+                });
+            }
+
+            // 创建检查点
+            this.createCheckpoint(task.id, i, 'phase_completed');
+        }
+    }
+
+    /**
+     * 执行协作任务
+     */
+    async executeCollaborationTask(task, onUpdate) {
+        // 使用协作引擎执行任务
+        const collaborationEngine = this.autogenService.getCollaborationEngine();
+        
+        if (task.metadata.topic && task.assignedAgents.length > 0) {
+            const result = await collaborationEngine.startCollaboration(
+                task.metadata.conversation,
+                task.metadata.topic,
+                task.assignedAgents,
+                (update) => {
+                    // 将协作更新转换为进度更新
+                    if (onUpdate) {
+                        onUpdate({
+                            type: 'collaboration_update',
+                            task: task,
+                            collaborationUpdate: update,
+                            timestamp: Date.now()
+                        });
+                    }
+                    
+                    // 更新任务进度
+                    this.updateTaskProgressFromCollaboration(task, update);
+                }
+            );
+            
+            task.metadata.collaborationResult = result;
+        }
+    }
+
+    /**
+     * 执行通用任务
+     */
+    async executeGeneralTask(task, onUpdate) {
+        const totalSteps = task.steps.length || task.phases.length || 1;
+        
+        for (let i = 0; i < totalSteps; i++) {
+            const step = task.steps[i] || task.phases[i] || { name: `步骤 ${i + 1}` };
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'step_started',
+                    task: task,
+                    step: step,
+                    stepIndex: i,
+                    timestamp: Date.now()
+                });
+            }
+
+            // 模拟步骤执行
+            await this.simulateStep(step, task);
+            
+            // 更新进度
+            task.progress = Math.round(((i + 1) / totalSteps) * 100);
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'step_completed',
+                    task: task,
+                    step: step,
+                    stepIndex: i,
+                    progress: task.progress,
+                    timestamp: Date.now()
+                });
+            }
+
+            // 创建检查点
+            this.createCheckpoint(task.id, i, 'step_completed');
+        }
+    }
+
+    /**
+     * 执行阶段
+     */
+    async executePhase(task, phase, phaseIndex, onUpdate) {
+        if (onUpdate) {
+            onUpdate({
+                type: 'phase_started',
+                task: task,
+                phase: phase,
+                phaseIndex: phaseIndex,
+                timestamp: Date.now()
+            });
+        }
+
+        // 根据阶段类型执行相应逻辑
+        if (phase.agent && task.assignedAgents) {
+            const agent = task.assignedAgents.find(a => a.type === phase.agent);
+            if (agent && task.metadata.conversation) {
+                // 让特定智能体处理这个阶段
+                await this.autogenService.generateAgentResponse(
+                    agent, 
+                    task.metadata.conversation, 
+                    phase.description || `执行阶段：${phase.phase}`
+                );
+            }
+        }
+
+        // 模拟阶段执行时间
+        await this.delay(1000);
+    }
+
+    /**
+     * 暂停任务
+     * @param {string} taskId 任务ID
+     */
+    pauseTask(taskId) {
+        const task = this.activeTasks.get(taskId);
+        if (task && task.status === 'running') {
+            task.status = 'paused';
+            
+            // 创建暂停检查点
+            this.createCheckpoint(taskId, task.currentPhase, 'paused');
+            
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 恢复任务
+     * @param {string} taskId 任务ID
+     * @param {Function} onUpdate 进度更新回调
+     */
+    async resumeTask(taskId, onUpdate = null) {
+        const task = this.activeTasks.get(taskId);
+        if (task && task.status === 'paused') {
+            task.status = 'running';
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'task_resumed',
+                    task: task,
+                    timestamp: Date.now()
+                });
+            }
+
+            // 从暂停点继续执行
+            return await this.continueFromCheckpoint(taskId, onUpdate);
+        }
+        return false;
+    }
+
+    /**
+     * 创建检查点
+     * @param {string} taskId 任务ID
+     * @param {number} position 位置
+     * @param {string} type 检查点类型
+     */
+    createCheckpoint(taskId, position, type) {
+        const task = this.activeTasks.get(taskId);
+        if (!task) return;
+
+        const checkpoint = {
+            id: `checkpoint_${Date.now()}`,
+            taskId: taskId,
+            position: position,
+            type: type,
+            timestamp: Date.now(),
+            taskState: JSON.parse(JSON.stringify(task)) // 深拷贝任务状态
+        };
+
+        if (!this.checkpoints.has(taskId)) {
+            this.checkpoints.set(taskId, []);
+        }
+        
+        const taskCheckpoints = this.checkpoints.get(taskId);
+        taskCheckpoints.push(checkpoint);
+
+        // 限制检查点数量
+        const MAX_CHECKPOINTS = 20;
+        if (taskCheckpoints.length > MAX_CHECKPOINTS) {
+            taskCheckpoints.shift();
+        }
+    }
+
+    /**
+     * 从检查点继续执行
+     * @param {string} taskId 任务ID
+     * @param {Function} onUpdate 进度更新回调
+     */
+    async continueFromCheckpoint(taskId, onUpdate) {
+        const task = this.activeTasks.get(taskId);
+        const taskCheckpoints = this.checkpoints.get(taskId);
+        
+        if (!task || !taskCheckpoints || taskCheckpoints.length === 0) {
+            return false;
+        }
+
+        // 获取最新的检查点
+        const lastCheckpoint = taskCheckpoints[taskCheckpoints.length - 1];
+        
+        // 从检查点恢复任务状态
+        const checkpointTask = lastCheckpoint.taskState;
+        Object.assign(task, checkpointTask);
+        task.status = 'running';
+
+        // 继续执行剩余步骤
+        if (task.type === 'workflow') {
+            await this.continueWorkflowFromCheckpoint(task, lastCheckpoint.position, onUpdate);
+        } else {
+            await this.continueGeneralTaskFromCheckpoint(task, lastCheckpoint.position, onUpdate);
+        }
+
+        return true;
+    }
+
+    /**
+     * 从检查点继续工作流
+     */
+    async continueWorkflowFromCheckpoint(task, startPosition, onUpdate) {
+        for (let i = startPosition + 1; i < task.phases.length; i++) {
+            const phase = task.phases[i];
+            task.currentPhase = i;
+            
+            await this.executePhase(task, phase, i, onUpdate);
+            
+            task.progress = Math.round(((i + 1) / task.phases.length) * 100);
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'phase_completed',
+                    task: task,
+                    phase: phase,
+                    phaseIndex: i,
+                    progress: task.progress,
+                    timestamp: Date.now()
+                });
+            }
+
+            this.createCheckpoint(task.id, i, 'phase_completed');
+        }
+    }
+
+    /**
+     * 从检查点继续通用任务
+     */
+    async continueGeneralTaskFromCheckpoint(task, startPosition, onUpdate) {
+        const totalSteps = task.steps.length || task.phases.length || 1;
+        
+        for (let i = startPosition + 1; i < totalSteps; i++) {
+            const step = task.steps[i] || task.phases[i] || { name: `步骤 ${i + 1}` };
+            
+            await this.simulateStep(step, task);
+            
+            task.progress = Math.round(((i + 1) / totalSteps) * 100);
+            
+            if (onUpdate) {
+                onUpdate({
+                    type: 'step_completed',
+                    task: task,
+                    step: step,
+                    stepIndex: i,
+                    progress: task.progress,
+                    timestamp: Date.now()
+                });
+            }
+
+            this.createCheckpoint(task.id, i, 'step_completed');
+        }
+    }
+
+    /**
+     * 获取任务信息
+     * @param {string} taskId 任务ID
+     * @returns {Object} 任务信息
+     */
+    getTask(taskId) {
+        return this.activeTasks.get(taskId) || this.taskHistory.get(taskId);
+    }
+
+    /**
+     * 获取所有活跃任务
+     * @returns {Array} 活跃任务列表
+     */
+    getActiveTasks() {
+        return Array.from(this.activeTasks.values());
+    }
+
+    /**
+     * 获取任务历史
+     * @returns {Array} 任务历史列表
+     */
+    getTaskHistory() {
+        return Array.from(this.taskHistory.values());
+    }
+
+    /**
+     * 更新协作任务进度
+     */
+    updateTaskProgressFromCollaboration(task, collaborationUpdate) {
+        switch (collaborationUpdate.type) {
+            case 'phase_start':
+                const phaseProgress = {
+                    'initial_positions': 25,
+                    'debate': 50,
+                    'consensus_building': 75,
+                    'finalization': 100
+                };
+                task.progress = phaseProgress[collaborationUpdate.phase] || task.progress;
+                break;
+            case 'collaboration_complete':
+                task.progress = 100;
+                break;
+        }
+    }
+
+    /**
+     * 模拟步骤执行
+     */
+    async simulateStep(step, task) {
+        // 根据步骤复杂度决定执行时间
+        const complexity = step.complexity || 'medium';
+        const durations = {
+            'simple': 500,
+            'medium': 1000,
+            'complex': 2000
+        };
+        
+        await this.delay(durations[complexity] || 1000);
+    }
+
+    /**
+     * 完成任务
+     * @param {string} taskId 任务ID
+     */
+    completeTask(taskId) {
+        const task = this.activeTasks.get(taskId);
+        if (task) {
+            task.status = 'completed';
+            task.endTime = Date.now();
+            task.progress = 100;
+            
+            // 移动到历史记录
+            this.taskHistory.set(taskId, task);
+            this.activeTasks.delete(taskId);
+            
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 删除任务
+     * @param {string} taskId 任务ID
+     */
+    deleteTask(taskId) {
+        const deleted = this.activeTasks.delete(taskId) || this.taskHistory.delete(taskId);
+        if (deleted) {
+            this.checkpoints.delete(taskId);
+        }
+        return deleted;
+    }
+
+    /**
+     * 获取任务统计信息
+     * @returns {Object} 统计信息
+     */
+    getTaskStatistics() {
+        const activeTasks = this.getActiveTasks();
+        const taskHistory = this.getTaskHistory();
+        
+        return {
+            total: activeTasks.length + taskHistory.length,
+            active: activeTasks.length,
+            completed: taskHistory.filter(t => t.status === 'completed').length,
+            failed: taskHistory.filter(t => t.status === 'failed').length,
+            averageCompletionTime: this.calculateAverageCompletionTime(taskHistory)
+        };
+    }
+
+    /**
+     * 计算平均完成时间
+     */
+    calculateAverageCompletionTime(tasks) {
+        const completedTasks = tasks.filter(t => t.status === 'completed' && t.endTime);
+        if (completedTasks.length === 0) return 0;
+        
+        const totalTime = completedTasks.reduce((sum, task) => {
+            return sum + (task.endTime - task.startTime);
+        }, 0);
+        
+        return Math.round(totalTime / completedTasks.length);
+    }
+
+    /**
+     * 延迟函数
+     */
+    delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 }
 
