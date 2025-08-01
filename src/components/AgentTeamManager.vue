@@ -73,27 +73,76 @@
                 
                 <!-- 智能体选择 -->
                 <div class="agent-selection">
-                    <h5>选择智能体</h5>
-                    <div class="agent-grid">
-                        <label v-for="(template, key) in agentTemplates" :key="key" class="agent-card-checkbox">
-                            <input 
-                                type="checkbox" 
-                                :value="key" 
-                                v-model="newTeam.selectedAgents"
-                            >
-                            <div class="agent-card" :class="{ selected: newTeam.selectedAgents.includes(key) }">
-                                <div class="agent-header">
-                                    <span class="agent-avatar">{{ template.avatar }}</span>
-                                    <span class="agent-name">{{ template.name }}</span>
+                    <div class="selection-header">
+                        <h5>选择智能体</h5>
+                        <div class="quality-filter">
+                            <label>
+                                <input type="checkbox" v-model="showPremiumOnly">
+                                仅显示增强版智能体 ⭐
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- 增强版智能体（优先显示） -->
+                    <div v-if="enhancedAgents.length > 0" class="enhanced-agents-section">
+                        <h6 class="section-title">🚀 增强版智能体 (基于v0/Cursor/Manus)</h6>
+                        <div class="agent-grid enhanced">
+                            <label v-for="(template, key) in enhancedAgents" :key="key" class="agent-card-checkbox enhanced">
+                                <input 
+                                    type="checkbox" 
+                                    :value="key" 
+                                    v-model="newTeam.selectedAgents"
+                                >
+                                <div class="agent-card" :class="{ selected: newTeam.selectedAgents.includes(key) }">
+                                    <div class="agent-header">
+                                        <span class="agent-avatar">{{ template.avatar }}</span>
+                                        <span class="agent-name">{{ template.name }}</span>
+                                        <span class="quality-badge premium">⭐ 增强版</span>
+                                    </div>
+                                    <div class="agent-source">
+                                        <span class="source-tag">{{ getSourceTag(template.source || template.id) }}</span>
+                                    </div>
+                                    <div class="agent-capabilities">
+                                        <span v-for="capability in template.capabilities.slice(0, 4)" :key="capability" class="capability-tag enhanced">
+                                            {{ formatCapability(capability) }}
+                                        </span>
+                                        <span v-if="template.capabilities.length > 4" class="capability-more">+{{ template.capabilities.length - 4 }}</span>
+                                    </div>
+                                    <p class="agent-description">{{ getAgentDescription(template) }}</p>
+                                    <div class="enhancement-tags" v-if="template.enhancements">
+                                        <span v-for="enhancement in template.enhancements" :key="enhancement" class="enhancement-tag">
+                                            {{ getEnhancementName(enhancement) }}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div class="agent-capabilities">
-                                    <span v-for="capability in template.capabilities" :key="capability" class="capability-tag">
-                                        {{ formatCapability(capability) }}
-                                    </span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- 标准智能体 -->
+                    <div v-if="!showPremiumOnly && standardAgents.length > 0" class="standard-agents-section">
+                        <h6 class="section-title">🤖 标准智能体</h6>
+                        <div class="agent-grid">
+                            <label v-for="(template, key) in standardAgents" :key="key" class="agent-card-checkbox">
+                                <input 
+                                    type="checkbox" 
+                                    :value="key" 
+                                    v-model="newTeam.selectedAgents"
+                                >
+                                <div class="agent-card" :class="{ selected: newTeam.selectedAgents.includes(key) }">
+                                    <div class="agent-header">
+                                        <span class="agent-avatar">{{ template.avatar }}</span>
+                                        <span class="agent-name">{{ template.name }}</span>
+                                    </div>
+                                    <div class="agent-capabilities">
+                                        <span v-for="capability in template.capabilities" :key="capability" class="capability-tag">
+                                            {{ formatCapability(capability) }}
+                                        </span>
+                                    </div>
+                                    <p class="agent-description">{{ getAgentDescription(template) }}</p>
                                 </div>
-                                <p class="agent-description">{{ getAgentDescription(template) }}</p>
-                            </div>
-                        </label>
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -185,6 +234,7 @@ import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { autogenService } from '../services/autogenService.js'
 import { mcpService } from '../services/mcpService.js'
+import { promptService } from '../services/promptService.js'
 
 const emit = defineEmits(['updateTeamOptions', 'teamCreated'])
 
@@ -202,8 +252,39 @@ const newTeam = ref({
     selectedLLMId: ''
 })
 
+// 增强版智能体相关状态
+const showPremiumOnly = ref(false)
+
 // 智能体模板
 const agentTemplates = computed(() => autogenService.getDefaultAgentTemplates())
+
+// 增强版智能体（来自提示词库）
+const enhancedAgents = computed(() => {
+    const allTemplates = agentTemplates.value
+    const enhanced = {}
+    
+    Object.entries(allTemplates).forEach(([key, template]) => {
+        if (template.quality === 'premium' || template.source === 'enhanced') {
+            enhanced[key] = template
+        }
+    })
+    
+    return enhanced
+})
+
+// 标准智能体
+const standardAgents = computed(() => {
+    const allTemplates = agentTemplates.value
+    const standard = {}
+    
+    Object.entries(allTemplates).forEach(([key, template]) => {
+        if (template.quality !== 'premium' && template.source !== 'enhanced') {
+            standard[key] = template
+        }
+    })
+    
+    return standard
+})
 
 // 工作流模板
 const workflowTemplates = computed(() => autogenService.getWorkflowTemplatesList())
@@ -358,6 +439,31 @@ const formatCapability = (capability) => {
         'user_advocacy': '用户倡导'
     }
     return capabilityMap[capability] || capability
+}
+
+// 获取来源标签
+const getSourceTag = (source) => {
+    const sourceMap = {
+        'creative_designer_v0': 'v0设计',
+        'technical_architect_cursor': 'Cursor',
+        'product_manager_manus': 'Manus',
+        'data_analyst_enhanced': '多维思维',
+        'qa_engineer_systematic': '系统化'
+    }
+    
+    return sourceMap[source] || '增强版'
+}
+
+// 获取增强功能名称
+const getEnhancementName = (enhancement) => {
+    const enhancementMap = {
+        'multidimensional_thinking': '多维思维',
+        'structured_response': '结构化响应',
+        'quality_assurance': '质量保证',
+        'collaboration_optimization': '协作优化'
+    }
+    
+    return enhancementMap[enhancement] || enhancement
 }
 
 // 创建团队
@@ -611,6 +717,122 @@ onMounted(() => {
 
 .agent-selection {
     margin-bottom: 16px;
+}
+
+.selection-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.quality-filter label {
+    font-size: 14px;
+    color: #666;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    margin: 16px 0 12px 0;
+    padding-left: 8px;
+    border-left: 4px solid #007bff;
+}
+
+.enhanced-agents-section {
+    margin-bottom: 20px;
+}
+
+.enhanced-agents-section .section-title {
+    border-left-color: #28a745;
+    color: #28a745;
+}
+
+.agent-grid.enhanced {
+    border: 2px solid #28a745;
+    border-radius: 8px;
+    padding: 12px;
+    background: linear-gradient(135deg, #f8fff9 0%, #f0fff1 100%);
+}
+
+.agent-card-checkbox.enhanced .agent-card {
+    border: 2px solid #28a745;
+    background: linear-gradient(135deg, #ffffff 0%, #f8fff9 100%);
+    position: relative;
+}
+
+.agent-card-checkbox.enhanced .agent-card::before {
+    content: "⭐";
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 16px;
+    animation: sparkle 2s infinite;
+}
+
+@keyframes sparkle {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.7; transform: scale(1.1); }
+}
+
+.quality-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: bold;
+}
+
+.quality-badge.premium {
+    background: linear-gradient(45deg, #28a745, #20c997);
+    color: white;
+}
+
+.agent-source {
+    margin: 4px 0;
+}
+
+.source-tag {
+    background: linear-gradient(45deg, #007bff, #0056b3);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+.capability-tag.enhanced {
+    background: linear-gradient(45deg, #28a745, #20c997);
+    color: white;
+    border: none;
+}
+
+.capability-more {
+    background: #6c757d;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: bold;
+}
+
+.enhancement-tags {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.enhancement-tag {
+    background: linear-gradient(45deg, #17a2b8, #138496);
+    color: white;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 9px;
+    font-weight: bold;
 }
 
 .agent-selection h5, .llm-selection h5 {

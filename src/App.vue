@@ -73,6 +73,12 @@
             </button>
         </div>
 
+        <!-- AutoGen仪表板 (AutoGen模式) -->
+        <AutoGenDashboard 
+            v-if="useAutogenMode && !showSettings" 
+            @createTeam="showAgentManager = true"
+        />
+        
         <!-- 智能体团队管理器 (AutoGen模式) -->
         <AgentTeamManager 
             v-if="useAutogenMode && !showSettings" 
@@ -118,6 +124,7 @@ import PromptsManager from './components/PromptsManager.vue'
 import ChatPage from './components/ChatPage.vue'
 import LLMManager from './components/LLMManager.vue'
 import AgentTeamManager from './components/AgentTeamManager.vue'
+import AutoGenDashboard from './components/AutoGenDashboard.vue'
 import { autogenService } from './services/autogenService.js'
 import { mcpService } from './services/mcpService.js'
 import './styles/common.css'

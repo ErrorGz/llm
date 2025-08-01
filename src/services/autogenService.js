@@ -77,7 +77,7 @@ class AutoGenService {
     getAvailableEnhancedTemplates() {
         const enhancedTemplates = {};
         const availablePrompts = promptService.getAllPrompts();
-        
+
         availablePrompts.forEach(prompt => {
             if (prompt.quality === 'premium') {
                 enhancedTemplates[prompt.id] = {
@@ -91,7 +91,7 @@ class AutoGenService {
                 };
             }
         });
-        
+
         return enhancedTemplates;
     }
 
@@ -101,7 +101,7 @@ class AutoGenService {
     getDefaultAgentTemplates() {
         // 获取增强版模板
         const enhancedTemplates = this.getAvailableEnhancedTemplates();
-        
+
         return {
             // 增强版智能体模板（优先级最高）
             ...enhancedTemplates,

@@ -382,9 +382,9 @@ class PromptService {
         }
 
         // 检查结构化程度
-        const hasStructure = prompt.systemPrompt.includes('核心能力') || 
-                           prompt.systemPrompt.includes('工作流程') ||
-                           prompt.systemPrompt.includes('方法论');
+        const hasStructure = prompt.systemPrompt.includes('核心能力') ||
+            prompt.systemPrompt.includes('工作流程') ||
+            prompt.systemPrompt.includes('方法论');
         if (hasStructure) {
             qualityScore += 15;
             feedback.push("提示词结构清晰");
