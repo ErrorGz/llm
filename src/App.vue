@@ -73,7 +73,8 @@
         </div>
 
         <!-- AutoGen仪表板 (AutoGen模式) -->
-        <AutoGenDashboard v-if="useAutogenMode && !showSettings" @createTeam="showAgentManager = true" />
+        <AutoGenDashboard v-if="useAutogenMode && !showSettings" :collaboration-status="collaborationStatus"
+            :current-team="currentTeam" @createTeam="showAgentManager = true" />
 
         <!-- 智能体团队管理器 (AutoGen模式) -->
         <AgentTeamManager v-if="useAutogenMode && !showSettings" @updateTeamOptions="loadAgentTeams"
@@ -178,6 +179,9 @@ const agentTeams = ref([])
 const conversationId = ref(null)
 const showAgentManager = ref(false)
 const useAutogenMode = ref(true) // 是否使用AutoGen模式
+
+// 协作状态
+const collaborationStatus = ref(null)
 
 // 语音模型配置（响应式）
 const speechConfig = ref({
@@ -695,6 +699,26 @@ const sendToAutogen = async (content) => {
             switch (event.type) {
                 case 'agent_selected':
                     console.log(`智能体选择: ${event.agent.name} - ${event.reason}`)
+                    // 更新协作状态为单智能体模式
+                    updateCollaborationStatus({
+                        mode: 'single',
+                        currentAgent: event.agent,
+                        status: '已选择智能体'
+                    })
+                    break
+
+                case 'collaboration_start':
+                    console.log(`🎪 多智能体协作开始，参与者: ${event.agents.map(a => a.name).join(', ')}`)
+                    // 更新协作状态为多智能体模式
+                    updateCollaborationStatus({
+                        mode: 'multi',
+                        participants: event.agents,
+                        totalRounds: Math.min(3, event.agents.length),
+                        currentRound: 1,
+                        currentSpeaker: null,
+                        currentSpeakerId: null,
+                        progress: 0
+                    })
                     break
 
                 case 'agent_start':
@@ -703,6 +727,16 @@ const sendToAutogen = async (content) => {
                     if (currentTeam.value) {
                         const agent = currentTeam.value.agents.find(a => a.id === event.agent.id)
                         if (agent) agent.status = 'thinking'
+                    }
+
+                    // 更新协作状态中的当前发言者
+                    if (event.round) {
+                        updateCollaborationStatus({
+                            currentRound: event.round,
+                            currentSpeaker: event.agent.name,
+                            currentSpeakerId: event.agent.id,
+                            progress: Math.round(((event.round - 1) * collaborationStatus.participants?.length + event.order) / (collaborationStatus.totalRounds * collaborationStatus.participants?.length) * 100)
+                        })
                     }
                     break
 
@@ -763,7 +797,21 @@ const sendToAutogen = async (content) => {
                 case 'sequence_complete':
                     console.log(`顺序模式: ${event.agent.name} 完成 (${event.index + 1}/${event.total})`)
                     break
+
+                case 'collaboration_complete':
+                    console.log('🎉 多智能体协作完成')
+                    // 重置协作状态
+                    collaborationStatus.value = null
+                    break
             }
+        }
+
+        // 更新协作状态函数
+        const updateCollaborationStatus = (updates) => {
+            if (!collaborationStatus.value) {
+                collaborationStatus.value = {}
+            }
+            Object.assign(collaborationStatus.value, updates)
         }
 
         // 使用AutoGen服务发送消息（带流式更新）

@@ -947,28 +947,32 @@ class AutoGenService {
     }
 
     /**
-     * 群聊模式处理 (流式版本)
+     * 群聊模式处理 (流式版本) - 多智能体协作
      */
     async handleGroupChatStream(conversation, message, onStreamUpdate) {
-        console.log('handleGroupChatStream 开始，智能体数量:', conversation.agents.length);
-        console.log('可用智能体详情:', conversation.agents.map(a => ({
+        console.log('🚀 多智能体协作模式开始，智能体数量:', conversation.agents.length);
+        console.log('🤖 可用智能体详情:', conversation.agents.map(a => ({
             name: a.name,
             role: a.role,
             hasLLMConfig: !!a.llmConfig,
             llmConfig: a.llmConfig ? { name: a.llmConfig.name, hasEndpoint: !!a.llmConfig.endpoint } : null
         })));
 
-        // 基于消息内容和智能体能力选择最适合的智能体
-        const selectedAgent = await this.selectBestAgent(conversation.agents, message);
-        console.log('选择的智能体:', selectedAgent ? { name: selectedAgent.name, hasLLMConfig: !!selectedAgent.llmConfig } : 'null');
+        // 获取可用的智能体列表（至少需要2个智能体才能协作）
+        const availableAgents = conversation.agents.filter(agent =>
+            agent.llmConfig && agent.llmConfig.endpoint && agent.llmConfig.apiKey
+        );
 
-        if (!selectedAgent) {
-            console.error('没有选择到合适的智能体');
-            return conversation;
+        if (availableAgents.length < 2) {
+            console.warn('⚠️ 智能体数量不足，无法进行协作对话，降级为单智能体模式');
+            const selectedAgent = availableAgents[0] || conversation.agents[0];
+            return await this.handleSingleAgentResponse(conversation, message, selectedAgent, onStreamUpdate);
         }
 
-        conversation.currentSpeaker = selectedAgent.id;
-        selectedAgent.status = 'thinking';
+        console.log('🎯 启动多智能体协作，参与智能体数量:', availableAgents.length);
+
+        // 开始多智能体协作流程
+        return await this.startMultiAgentCollaboration(conversation, message, availableAgents, onStreamUpdate);
 
         // 创建空的回复消息
         const responseMessage = {
@@ -1032,6 +1036,244 @@ class AutoGenService {
         }
 
         return conversation;
+    }
+
+    /**
+     * 处理单智能体响应
+     */
+    async handleSingleAgentResponse(conversation, message, selectedAgent, onStreamUpdate) {
+        console.log('🤖 单智能体模式，选择的智能体:', selectedAgent.name);
+
+        conversation.currentSpeaker = selectedAgent.id;
+        selectedAgent.status = 'thinking';
+
+        // 创建空的回复消息
+        const responseMessage = {
+            id: uuidv4(),
+            content: '',
+            sender: selectedAgent.id,
+            senderName: selectedAgent.name,
+            timestamp: Date.now(),
+            isSelf: false,
+            avatar: selectedAgent.avatar,
+            metadata: { streaming: true, selectedByAI: true }
+        };
+
+        conversation.messages.push(responseMessage);
+
+        // 通知智能体选择和开始
+        if (onStreamUpdate) {
+            onStreamUpdate({
+                type: 'agent_selected',
+                agent: selectedAgent,
+                reason: '智能体数量不足，使用单智能体模式',
+                conversation
+            });
+
+            onStreamUpdate({
+                type: 'agent_start',
+                agent: selectedAgent,
+                message: responseMessage,
+                conversation
+            });
+        }
+
+        try {
+            // 生成流式回复
+            await this.generateAgentResponseStream(selectedAgent, conversation, message, (chunk) => {
+                responseMessage.content += chunk;
+
+                if (onStreamUpdate) {
+                    onStreamUpdate({
+                        type: 'content_update',
+                        content: chunk,
+                        fullContent: responseMessage.content,
+                        message: responseMessage,
+                        conversation
+                    });
+                }
+            });
+
+            selectedAgent.status = 'idle';
+            responseMessage.metadata.streaming = false;
+
+            if (onStreamUpdate) {
+                onStreamUpdate({
+                    type: 'agent_complete',
+                    agent: selectedAgent,
+                    message: responseMessage,
+                    conversation
+                });
+            }
+        } catch (error) {
+            console.error('生成智能体回复时出错:', error);
+            selectedAgent.status = 'idle';
+            responseMessage.metadata.streaming = false;
+            responseMessage.content = '抱歉，我遇到了一些技术问题，无法正常回复。';
+        }
+
+        return conversation;
+    }
+
+    /**
+     * 启动多智能体协作
+     */
+    async startMultiAgentCollaboration(conversation, userMessage, availableAgents, onStreamUpdate) {
+        console.log('🎪 开始多智能体协作讨论');
+
+        // 设置协作参数
+        const collaborationConfig = {
+            maxRounds: Math.min(3, availableAgents.length), // 最多3轮或智能体数量
+            participatingAgents: availableAgents.slice(0, 4), // 最多4个智能体参与
+            discussionTopic: userMessage.content
+        };
+
+        console.log('🔧 协作配置:', {
+            参与智能体数量: collaborationConfig.participatingAgents.length,
+            智能体名单: collaborationConfig.participatingAgents.map(a => a.name),
+            讨论轮数: collaborationConfig.maxRounds
+        });
+
+        // 通知开始协作
+        if (onStreamUpdate) {
+            onStreamUpdate({
+                type: 'collaboration_start',
+                agents: collaborationConfig.participatingAgents,
+                topic: userMessage.content,
+                conversation
+            });
+        }
+
+        // 进行多轮讨论
+        for (let round = 1; round <= collaborationConfig.maxRounds; round++) {
+            console.log(`🔄 第${round}轮讨论开始`);
+
+            const roundPrompt = this.generateRoundPrompt(round, userMessage.content, conversation);
+
+            // 让每个智能体依次发表观点
+            for (let i = 0; i < collaborationConfig.participatingAgents.length; i++) {
+                const agent = collaborationConfig.participatingAgents[i];
+
+                console.log(`💬 第${round}轮 - ${agent.name} 开始发言`);
+
+                await this.generateAgentContribution(
+                    conversation,
+                    agent,
+                    roundPrompt,
+                    round,
+                    i + 1,
+                    collaborationConfig.participatingAgents.length,
+                    onStreamUpdate
+                );
+
+                // 短暂延迟，让用户看到对话进展
+                await new Promise(resolve => setTimeout(resolve, 800));
+            }
+        }
+
+        // 通知协作完成
+        if (onStreamUpdate) {
+            onStreamUpdate({
+                type: 'collaboration_complete',
+                conversation
+            });
+        }
+
+        console.log('✅ 多智能体协作完成');
+        return conversation;
+    }
+
+    /**
+     * 生成轮次提示词
+     */
+    generateRoundPrompt(round, originalTopic, conversation) {
+        const recentMessages = conversation.messages.slice(-6); // 最近6条消息作为上下文
+
+        const basePrompts = {
+            1: `作为专业顾问，请就以下话题发表你的初步观点和建议：\n\n${originalTopic}\n\n请提供你的专业见解和分析。`,
+            2: `基于之前同事们的讨论，请补充你的观点或提出不同的看法：\n\n原始问题：${originalTopic}\n\n请在前面观点的基础上，提供你的补充意见或不同角度的分析。`,
+            3: `请对这个话题进行总结并提出最终建议：\n\n${originalTopic}\n\n结合前面所有讨论，请给出你的综合建议和行动方案。`
+        };
+
+        return basePrompts[round] || basePrompts[3];
+    }
+
+    /**
+     * 生成智能体贡献
+     */
+    async generateAgentContribution(conversation, agent, prompt, round, order, totalAgents, onStreamUpdate) {
+        conversation.currentSpeaker = agent.id;
+        agent.status = 'thinking';
+
+        // 创建消息
+        const responseMessage = {
+            id: uuidv4(),
+            content: '',
+            sender: agent.id,
+            senderName: agent.name,
+            timestamp: Date.now(),
+            isSelf: false,
+            avatar: agent.avatar,
+            metadata: {
+                streaming: true,
+                collaborationRound: round,
+                speakingOrder: order,
+                totalParticipants: totalAgents
+            }
+        };
+
+        conversation.messages.push(responseMessage);
+
+        // 通知智能体开始发言
+        if (onStreamUpdate) {
+            onStreamUpdate({
+                type: 'agent_start',
+                agent: agent,
+                message: responseMessage,
+                round: round,
+                order: order,
+                conversation
+            });
+        }
+
+        try {
+            // 生成流式回复
+            await this.generateAgentResponseStream(agent, conversation, { content: prompt }, (chunk) => {
+                responseMessage.content += chunk;
+
+                if (onStreamUpdate) {
+                    onStreamUpdate({
+                        type: 'content_update',
+                        content: chunk,
+                        fullContent: responseMessage.content,
+                        message: responseMessage,
+                        agent: agent,
+                        round: round,
+                        conversation
+                    });
+                }
+            });
+
+            agent.status = 'idle';
+            responseMessage.metadata.streaming = false;
+
+            // 通知智能体发言完成
+            if (onStreamUpdate) {
+                onStreamUpdate({
+                    type: 'agent_complete',
+                    agent: agent,
+                    message: responseMessage,
+                    round: round,
+                    conversation
+                });
+            }
+
+        } catch (error) {
+            console.error(`智能体 ${agent.name} 生成回复时出错:`, error);
+            agent.status = 'idle';
+            responseMessage.metadata.streaming = false;
+            responseMessage.content = `[${agent.name}] 抱歉，我在思考时遇到了技术问题，无法正常参与讨论。`;
+        }
     }
 
     /**

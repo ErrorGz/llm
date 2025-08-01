@@ -13,13 +13,13 @@
             <!-- 当前团队状态 -->
             <div class="status-card team-status">
                 <h4>📋 当前团队</h4>
-                <div v-if="currentTeam" class="team-info">
+                <div v-if="props.currentTeam" class="team-info">
                     <div class="team-header">
-                        <span class="team-name">{{ currentTeam.name }}</span>
-                        <span class="team-type">{{ getWorkflowDisplayName(currentTeam.workflowType) }}</span>
+                        <span class="team-name">{{ props.currentTeam.name }}</span>
+                        <span class="team-type">{{ getWorkflowDisplayName(props.currentTeam.workflowType) }}</span>
                     </div>
                     <div class="team-agents">
-                        <div v-for="agent in currentTeam.agents" :key="agent.id" class="agent-status">
+                        <div v-for="agent in props.currentTeam.agents" :key="agent.id" class="agent-status">
                             <span class="agent-avatar">{{ agent.avatar }}</span>
                             <span class="agent-name">{{ agent.name }}</span>
                             <span class="agent-state" :class="agent.status">
@@ -38,18 +38,46 @@
             <!-- 协作进度 -->
             <div class="status-card collaboration-progress">
                 <h4>🚀 协作进度</h4>
-                <div v-if="activeTask" class="progress-info">
-                    <div class="task-name">{{ activeTask.name }}</div>
-                    <div class="progress-bar">
-                        <div class="progress-fill" :style="{ width: activeTask.progress + '%' }"></div>
-                        <span class="progress-text">{{ activeTask.progress }}%</span>
+                <div v-if="props.collaborationStatus" class="progress-info">
+                    <div class="collaboration-mode">
+                        <span class="mode-badge" :class="props.collaborationStatus.mode">
+                            {{ props.collaborationStatus.mode === 'multi' ? '🎪 多智能体协作' : '🤖 单智能体模式' }}
+                        </span>
                     </div>
-                    <div class="task-phase">
-                        当前阶段: {{ activeTask.currentPhase || '准备中' }}
+                    <div v-if="props.collaborationStatus.mode === 'multi'" class="multi-agent-status">
+                        <div class="round-info">
+                            <span class="round-badge">第 {{ props.collaborationStatus.currentRound }} / {{
+                                props.collaborationStatus.totalRounds }} 轮</span>
+                            <span class="speaker-info">当前发言: {{ props.collaborationStatus.currentSpeaker }}</span>
+                        </div>
+                        <div class="collaboration-progress-bar">
+                            <div class="progress-fill" :style="{ width: props.collaborationStatus.progress + '%' }">
+                            </div>
+                            <span class="progress-text">{{ props.collaborationStatus.progress }}%</span>
+                        </div>
+                        <div class="participating-agents">
+                            <div class="agents-list">
+                                <div v-for="agent in props.collaborationStatus.participants" :key="agent.id"
+                                    class="agent-participant"
+                                    :class="{ active: agent.id === props.collaborationStatus.currentSpeakerId }">
+                                    <span class="agent-avatar">{{ agent.avatar }}</span>
+                                    <span class="agent-name">{{ agent.name }}</span>
+                                    <span class="speaking-status"
+                                        v-if="agent.id === props.collaborationStatus.currentSpeakerId">💬</span>
+                                    <span class="completed-status" v-else-if="agent.hasSpoken">✓</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="single-agent-status">
+                        <div class="current-agent">
+                            <span class="agent-name">{{ props.collaborationStatus.currentAgent?.name || '等待选择' }}</span>
+                            <span class="agent-status">{{ props.collaborationStatus.status || '准备中' }}</span>
+                        </div>
                     </div>
                 </div>
                 <div v-else class="no-task">
-                    <p>暂无进行中的任务</p>
+                    <p>暂无协作活动</p>
                 </div>
             </div>
 
@@ -165,8 +193,19 @@ import { autogenService } from '../services/autogenService.js'
 
 const emit = defineEmits(['createTeam'])
 
+// 接收props
+const props = defineProps({
+    collaborationStatus: {
+        type: Object,
+        default: null
+    },
+    currentTeam: {
+        type: Object,
+        default: null
+    }
+})
+
 // 响应式数据
-const currentTeam = ref(null)
 const activeTask = ref(null)
 const agentPerformances = ref([])
 const systemStats = ref({
@@ -194,19 +233,19 @@ const refreshData = async () => {
     try {
         // 获取当前团队状态
         await updateCurrentTeam()
-        
+
         // 获取活跃任务
         await updateActiveTask()
-        
+
         // 获取智能体表现
         await updateAgentPerformances()
-        
+
         // 获取系统统计
         await updateSystemStats()
-        
+
         // 获取最近活动
         await updateRecentActivities()
-        
+
     } catch (error) {
         console.error('刷新仪表板数据失败:', error)
     }
@@ -226,7 +265,7 @@ const updateCurrentTeam = async () => {
 const updateActiveTask = async () => {
     const progressTracker = autogenService.getProgressTracker()
     const activeTasks = progressTracker.getActiveTasks()
-    
+
     if (activeTasks.length > 0) {
         activeTask.value = activeTasks[0] // 显示第一个活跃任务
     } else {
@@ -240,7 +279,7 @@ const updateAgentPerformances = async () => {
         agentPerformances.value = []
         return
     }
-    
+
     // 模拟智能体表现数据（实际项目中应该从服务获取）
     agentPerformances.value = currentTeam.value.agents.map(agent => ({
         agentId: agent.id,
@@ -255,16 +294,16 @@ const updateAgentPerformances = async () => {
 const updateSystemStats = async () => {
     const savedTeams = localStorage.getItem('agentTeamList')
     const savedMessages = localStorage.getItem('chatMessages')
-    
+
     const teams = savedTeams ? JSON.parse(savedTeams) : []
     const messages = savedMessages ? JSON.parse(savedMessages) : []
-    
+
     // 计算今日任务（简化示例）
     const today = new Date().toDateString()
-    const todayMessages = messages.filter(msg => 
+    const todayMessages = messages.filter(msg =>
         new Date(msg.id).toDateString() === today
     )
-    
+
     systemStats.value = {
         totalTeams: teams.length,
         totalMessages: messages.length,
@@ -302,7 +341,7 @@ const updateRecentActivities = async () => {
             text: '产品经理创建了新的项目团队'
         }
     ]
-    
+
     recentActivities.value = activities
 }
 
@@ -337,13 +376,13 @@ const formatTime = (timestamp) => {
     const now = Date.now()
     const diff = now - timestamp
     const minutes = Math.floor(diff / (1000 * 60))
-    
+
     if (minutes < 1) return '刚刚'
     if (minutes < 60) return `${minutes}分钟前`
-    
+
     const hours = Math.floor(minutes / 60)
     if (hours < 24) return `${hours}小时前`
-    
+
     const days = Math.floor(hours / 24)
     return `${days}天前`
 }
@@ -352,10 +391,10 @@ const formatTime = (timestamp) => {
 const applyEnhancements = () => {
     // 保存配置到localStorage
     localStorage.setItem('autogenEnhancements', JSON.stringify(enhancementSettings.value))
-    
+
     // 这里可以添加实际应用增强功能的逻辑
     console.log('应用增强功能配置:', enhancementSettings.value)
-    
+
     showSettings.value = false
 }
 
@@ -375,10 +414,10 @@ onMounted(() => {
     if (savedEnhancements) {
         enhancementSettings.value = { ...enhancementSettings.value, ...JSON.parse(savedEnhancements) }
     }
-    
+
     // 初始数据加载
     refreshData()
-    
+
     // 设置定时刷新（每30秒）
     refreshInterval = setInterval(refreshData, 30000)
 })
@@ -396,7 +435,7 @@ onUnmounted(() => {
     border-radius: 12px;
     padding: 20px;
     margin-bottom: 20px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
 .dashboard-header {
@@ -420,7 +459,8 @@ onUnmounted(() => {
     gap: 8px;
 }
 
-.refresh-btn, .settings-btn {
+.refresh-btn,
+.settings-btn {
     padding: 6px 12px;
     border: 1px solid #ddd;
     border-radius: 6px;
@@ -431,7 +471,8 @@ onUnmounted(() => {
     transition: all 0.2s ease;
 }
 
-.refresh-btn:hover, .settings-btn:hover {
+.refresh-btn:hover,
+.settings-btn:hover {
     background-color: #f8f9fa;
     border-color: #007bff;
     color: #007bff;
@@ -489,7 +530,7 @@ onUnmounted(() => {
     align-items: center;
     gap: 8px;
     padding: 6px;
-    background: rgba(255,255,255,0.7);
+    background: rgba(255, 255, 255, 0.7);
     border-radius: 6px;
 }
 
@@ -505,10 +546,25 @@ onUnmounted(() => {
     font-weight: bold;
 }
 
-.agent-state.idle { background: #28a745; color: white; }
-.agent-state.thinking { background: #ffc107; color: #212529; }
-.agent-state.speaking { background: #17a2b8; color: white; }
-.agent-state.listening { background: #6f42c1; color: white; }
+.agent-state.idle {
+    background: #28a745;
+    color: white;
+}
+
+.agent-state.thinking {
+    background: #ffc107;
+    color: #212529;
+}
+
+.agent-state.speaking {
+    background: #17a2b8;
+    color: white;
+}
+
+.agent-state.listening {
+    background: #6f42c1;
+    color: white;
+}
 
 .status-dot {
     display: inline-block;
@@ -518,38 +574,59 @@ onUnmounted(() => {
     margin-right: 4px;
 }
 
-.status-dot.idle { 
-    background: #fff; 
-    animation: none; 
+.status-dot.idle {
+    background: #fff;
+    animation: none;
 }
 
-.status-dot.thinking { 
-    background: #212529; 
+.status-dot.thinking {
+    background: #212529;
     animation: pulse 1.5s infinite;
 }
 
-.status-dot.speaking { 
-    background: #fff; 
+.status-dot.speaking {
+    background: #fff;
     animation: bounce 1s infinite;
 }
 
-.status-dot.listening { 
-    background: #fff; 
+.status-dot.listening {
+    background: #fff;
     animation: pulse 2s infinite;
 }
 
 @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.3;
+    }
 }
 
 @keyframes bounce {
-    0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
-    40% { transform: translateY(-3px); }
-    60% { transform: translateY(-2px); }
+
+    0%,
+    20%,
+    50%,
+    80%,
+    100% {
+        transform: translateY(0);
+    }
+
+    40% {
+        transform: translateY(-3px);
+    }
+
+    60% {
+        transform: translateY(-2px);
+    }
 }
 
-.no-team, .no-task {
+.no-team,
+.no-task {
     text-align: center;
     color: #6c757d;
 }
@@ -600,7 +677,7 @@ onUnmounted(() => {
     justify-content: space-between;
     align-items: center;
     padding: 8px;
-    background: rgba(255,255,255,0.7);
+    background: rgba(255, 255, 255, 0.7);
     border-radius: 6px;
 }
 
@@ -627,10 +704,21 @@ onUnmounted(() => {
     font-size: 12px;
 }
 
-.metric-value.quality.excellent { color: #28a745; }
-.metric-value.quality.good { color: #17a2b8; }
-.metric-value.quality.fair { color: #ffc107; }
-.metric-value.quality.poor { color: #dc3545; }
+.metric-value.quality.excellent {
+    color: #28a745;
+}
+
+.metric-value.quality.good {
+    color: #17a2b8;
+}
+
+.metric-value.quality.fair {
+    color: #ffc107;
+}
+
+.metric-value.quality.poor {
+    color: #dc3545;
+}
 
 .stats-grid {
     display: grid;
@@ -641,7 +729,7 @@ onUnmounted(() => {
 .stat-item {
     text-align: center;
     padding: 8px;
-    background: rgba(255,255,255,0.7);
+    background: rgba(255, 255, 255, 0.7);
     border-radius: 6px;
 }
 
@@ -746,7 +834,8 @@ onUnmounted(() => {
     justify-content: flex-end;
 }
 
-.apply-btn, .reset-btn {
+.apply-btn,
+.reset-btn {
     padding: 6px 12px;
     border: none;
     border-radius: 4px;
@@ -764,12 +853,170 @@ onUnmounted(() => {
     color: white;
 }
 
-.slide-down-enter-active, .slide-down-leave-active {
+.slide-down-enter-active,
+.slide-down-leave-active {
     transition: all 0.3s ease;
 }
 
-.slide-down-enter-from, .slide-down-leave-to {
+.slide-down-enter-from,
+.slide-down-leave-to {
     transform: translateY(-10px);
     opacity: 0;
+}
+
+/* 协作状态样式 */
+.collaboration-mode {
+    margin-bottom: 16px;
+}
+
+.mode-badge {
+    padding: 6px 12px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    color: white;
+}
+
+.mode-badge.multi {
+    background: linear-gradient(45deg, #007bff, #28a745);
+}
+
+.mode-badge.single {
+    background: #6c757d;
+}
+
+.multi-agent-status {
+    margin-top: 12px;
+}
+
+.round-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.round-badge {
+    background: #17a2b8;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.speaker-info {
+    font-size: 14px;
+    color: #495057;
+    font-weight: 500;
+}
+
+.collaboration-progress-bar {
+    position: relative;
+    background: #e9ecef;
+    border-radius: 10px;
+    height: 20px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.collaboration-progress-bar .progress-fill {
+    background: linear-gradient(45deg, #007bff, #28a745);
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+.collaboration-progress-bar .progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.participating-agents {
+    margin-top: 12px;
+}
+
+.agents-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.agent-participant {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    font-size: 13px;
+    transition: all 0.2s;
+}
+
+.agent-participant.active {
+    background: #e3f2fd;
+    border-color: #2196f3;
+    box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+}
+
+.agent-participant .agent-avatar {
+    font-size: 16px;
+}
+
+.agent-participant .agent-name {
+    font-weight: 500;
+    color: #495057;
+}
+
+.speaking-status {
+    color: #28a745;
+    font-weight: 600;
+    animation: pulse 1.5s infinite;
+}
+
+.completed-status {
+    color: #28a745;
+    font-weight: 600;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+.single-agent-status .current-agent {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 8px;
+}
+
+.single-agent-status .agent-name {
+    font-weight: 600;
+    color: #495057;
+}
+
+.single-agent-status .agent-status {
+    padding: 4px 8px;
+    background: #6c757d;
+    color: white;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
 }
 </style>
