@@ -1,4 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
+import { promptService } from './promptService.js';
 
 /**
  * AutoGen 多智能体协作服务
@@ -8,13 +9,13 @@ class AutoGenService {
         this.activeConversations = new Map();
         this.agentTemplates = this.getDefaultAgentTemplates();
         this.workflowTemplates = this.getWorkflowTemplates();
-        
+
         // 初始化智能体记忆系统
         this.agentMemorySystem = new AgentMemorySystem();
-        
+
         // 初始化智能体协作引擎
         this.collaborationEngine = new AgentCollaborationEngine(this);
-        
+
         // 初始化任务进度跟踪器
         this.progressTracker = new TaskProgressTracker(this);
     }
@@ -41,10 +42,69 @@ class AutoGenService {
     }
 
     /**
+     * 获取提示词服务实例
+     */
+    getPromptService() {
+        return promptService;
+    }
+
+    /**
+     * 获取增强版智能体模板
+     * @param {string} agentType 智能体类型
+     * @param {Object} enhancements 增强选项
+     * @returns {Object} 增强版智能体模板
+     */
+    getEnhancedAgentTemplate(agentType, enhancements = {}) {
+        const enhancedPrompt = promptService.getEnhancedPrompt(agentType, enhancements);
+        if (!enhancedPrompt) {
+            return null;
+        }
+
+        return {
+            name: enhancedPrompt.name,
+            role: "assistant",
+            systemPrompt: enhancedPrompt.systemPrompt,
+            avatar: enhancedPrompt.avatar,
+            capabilities: enhancedPrompt.capabilities,
+            quality: enhancedPrompt.quality,
+            enhancements: enhancedPrompt.enhancements || []
+        };
+    }
+
+    /**
+     * 获取可用的增强版智能体模板
+     */
+    getAvailableEnhancedTemplates() {
+        const enhancedTemplates = {};
+        const availablePrompts = promptService.getAllPrompts();
+        
+        availablePrompts.forEach(prompt => {
+            if (prompt.quality === 'premium') {
+                enhancedTemplates[prompt.id] = {
+                    name: prompt.name,
+                    role: "assistant",
+                    systemPrompt: prompt.systemPrompt,
+                    avatar: prompt.avatar,
+                    capabilities: prompt.capabilities,
+                    quality: "premium",
+                    source: "enhanced"
+                };
+            }
+        });
+        
+        return enhancedTemplates;
+    }
+
+    /**
      * 获取默认智能体模板
      */
     getDefaultAgentTemplates() {
+        // 获取增强版模板
+        const enhancedTemplates = this.getAvailableEnhancedTemplates();
+        
         return {
+            // 增强版智能体模板（优先级最高）
+            ...enhancedTemplates,
             // 原有角色
             analyst: {
                 name: "数据分析师",
@@ -1734,7 +1794,7 @@ class AgentCollaborationEngine {
      */
     async startCollaboration(conversation, topic, participatingAgents, onUpdate) {
         const discussionId = `discussion_${Date.now()}`;
-        
+
         const discussion = {
             id: discussionId,
             topic: topic,
@@ -1752,13 +1812,13 @@ class AgentCollaborationEngine {
         try {
             // 第一阶段：收集初始观点
             await this.collectInitialPositions(discussion, conversation, onUpdate);
-            
+
             // 第二阶段：展开辩论
             await this.conductDebate(discussion, conversation, onUpdate);
-            
+
             // 第三阶段：建立共识
             await this.buildConsensus(discussion, conversation, onUpdate);
-            
+
             // 第四阶段：最终化结果
             await this.finalizeResults(discussion, conversation, onUpdate);
 
@@ -1782,7 +1842,7 @@ class AgentCollaborationEngine {
      */
     async collectInitialPositions(discussion, conversation, onUpdate) {
         discussion.currentPhase = 'initial_positions';
-        
+
         if (onUpdate) {
             onUpdate({
                 type: 'phase_start',
@@ -1819,7 +1879,7 @@ class AgentCollaborationEngine {
      */
     async conductDebate(discussion, conversation, onUpdate) {
         discussion.currentPhase = 'debate';
-        
+
         if (onUpdate) {
             onUpdate({
                 type: 'phase_start',
@@ -1831,7 +1891,7 @@ class AgentCollaborationEngine {
 
         // 分析观点分歧
         const conflicts = this.analyzeConflicts(discussion.positions);
-        
+
         // 针对每个冲突点进行讨论
         for (const conflict of conflicts) {
             const debateRounds = await this.conductConflictDebate(conflict, discussion, conversation);
@@ -1853,7 +1913,7 @@ class AgentCollaborationEngine {
      */
     async buildConsensus(discussion, conversation, onUpdate) {
         discussion.currentPhase = 'consensus_building';
-        
+
         if (onUpdate) {
             onUpdate({
                 type: 'phase_start',
@@ -1864,7 +1924,7 @@ class AgentCollaborationEngine {
         }
 
         // 让协调员分析所有观点和争论，提出综合方案
-        const coordinator = discussion.participants.find(agent => 
+        const coordinator = discussion.participants.find(agent =>
             agent.capabilities && agent.capabilities.includes('coordination')
         );
 
@@ -1899,7 +1959,7 @@ class AgentCollaborationEngine {
      */
     async finalizeResults(discussion, conversation, onUpdate) {
         discussion.currentPhase = 'finalization';
-        
+
         // 记录共识历史
         this.consensusHistory.set(discussion.id, {
             topic: discussion.topic,
@@ -1976,7 +2036,7 @@ class AgentCollaborationEngine {
 
                 // 简单的冲突检测逻辑（实际中可以更复杂）
                 const conflictScore = this.calculateConflictScore(position1.content, position2.content);
-                
+
                 if (conflictScore > 0.3) { // 阈值可调整
                     conflicts.push({
                         agents: [agentId1, agentId2],
@@ -2048,7 +2108,7 @@ class AgentCollaborationEngine {
                 const otherAgent = discussion.participants.find(a => a.id === otherAgentId);
 
                 const argument = await this.generateArgument(agent, otherAgent, conflict, round, conversation);
-                
+
                 debateRounds.push({
                     round: round,
                     agent: agent,
@@ -2106,7 +2166,7 @@ ${conflict.positions.find(p => p === conflict.positions[1]).content}
      */
     async generateConsensusProposal(coordinator, discussion, conversation) {
         const allPositions = Array.from(discussion.positions.values()).map(p => p.content).join('\n\n');
-        const allArguments = discussion.arguments.map(arg => 
+        const allArguments = discussion.arguments.map(arg =>
             `${arg.agent.name}: ${arg.argument}`
         ).join('\n\n');
 
@@ -2213,7 +2273,7 @@ ${consensusProposal}
      * 完善共识方案
      */
     async refineConsensus(consensusProposal, evaluations, coordinator, conversation) {
-        const feedback = evaluations.map(evaluation => 
+        const feedback = evaluations.map(evaluation =>
             `${evaluation.agent.name}的评估：${evaluation.evaluation.content}`
         ).join('\n\n');
 
@@ -2328,7 +2388,7 @@ class TaskProgressTracker {
      */
     createTask(taskConfig) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
+
         const task = {
             id: taskId,
             name: taskConfig.name || '未命名任务',
@@ -2401,7 +2461,7 @@ class TaskProgressTracker {
         } catch (error) {
             task.status = 'failed';
             task.endTime = Date.now();
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'task_failed',
@@ -2410,7 +2470,7 @@ class TaskProgressTracker {
                     timestamp: Date.now()
                 });
             }
-            
+
             throw error;
         }
     }
@@ -2422,12 +2482,12 @@ class TaskProgressTracker {
         for (let i = 0; i < task.phases.length; i++) {
             const phase = task.phases[i];
             task.currentPhase = i;
-            
+
             await this.executePhase(task, phase, i, onUpdate);
-            
+
             // 更新进度
             task.progress = Math.round(((i + 1) / task.phases.length) * 100);
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'phase_completed',
@@ -2450,7 +2510,7 @@ class TaskProgressTracker {
     async executeCollaborationTask(task, onUpdate) {
         // 使用协作引擎执行任务
         const collaborationEngine = this.autogenService.getCollaborationEngine();
-        
+
         if (task.metadata.topic && task.assignedAgents.length > 0) {
             const result = await collaborationEngine.startCollaboration(
                 task.metadata.conversation,
@@ -2466,12 +2526,12 @@ class TaskProgressTracker {
                             timestamp: Date.now()
                         });
                     }
-                    
+
                     // 更新任务进度
                     this.updateTaskProgressFromCollaboration(task, update);
                 }
             );
-            
+
             task.metadata.collaborationResult = result;
         }
     }
@@ -2481,10 +2541,10 @@ class TaskProgressTracker {
      */
     async executeGeneralTask(task, onUpdate) {
         const totalSteps = task.steps.length || task.phases.length || 1;
-        
+
         for (let i = 0; i < totalSteps; i++) {
             const step = task.steps[i] || task.phases[i] || { name: `步骤 ${i + 1}` };
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'step_started',
@@ -2497,10 +2557,10 @@ class TaskProgressTracker {
 
             // 模拟步骤执行
             await this.simulateStep(step, task);
-            
+
             // 更新进度
             task.progress = Math.round(((i + 1) / totalSteps) * 100);
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'step_completed',
@@ -2537,8 +2597,8 @@ class TaskProgressTracker {
             if (agent && task.metadata.conversation) {
                 // 让特定智能体处理这个阶段
                 await this.autogenService.generateAgentResponse(
-                    agent, 
-                    task.metadata.conversation, 
+                    agent,
+                    task.metadata.conversation,
                     phase.description || `执行阶段：${phase.phase}`
                 );
             }
@@ -2556,10 +2616,10 @@ class TaskProgressTracker {
         const task = this.activeTasks.get(taskId);
         if (task && task.status === 'running') {
             task.status = 'paused';
-            
+
             // 创建暂停检查点
             this.createCheckpoint(taskId, task.currentPhase, 'paused');
-            
+
             return true;
         }
         return false;
@@ -2574,7 +2634,7 @@ class TaskProgressTracker {
         const task = this.activeTasks.get(taskId);
         if (task && task.status === 'paused') {
             task.status = 'running';
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'task_resumed',
@@ -2611,7 +2671,7 @@ class TaskProgressTracker {
         if (!this.checkpoints.has(taskId)) {
             this.checkpoints.set(taskId, []);
         }
-        
+
         const taskCheckpoints = this.checkpoints.get(taskId);
         taskCheckpoints.push(checkpoint);
 
@@ -2630,14 +2690,14 @@ class TaskProgressTracker {
     async continueFromCheckpoint(taskId, onUpdate) {
         const task = this.activeTasks.get(taskId);
         const taskCheckpoints = this.checkpoints.get(taskId);
-        
+
         if (!task || !taskCheckpoints || taskCheckpoints.length === 0) {
             return false;
         }
 
         // 获取最新的检查点
         const lastCheckpoint = taskCheckpoints[taskCheckpoints.length - 1];
-        
+
         // 从检查点恢复任务状态
         const checkpointTask = lastCheckpoint.taskState;
         Object.assign(task, checkpointTask);
@@ -2660,11 +2720,11 @@ class TaskProgressTracker {
         for (let i = startPosition + 1; i < task.phases.length; i++) {
             const phase = task.phases[i];
             task.currentPhase = i;
-            
+
             await this.executePhase(task, phase, i, onUpdate);
-            
+
             task.progress = Math.round(((i + 1) / task.phases.length) * 100);
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'phase_completed',
@@ -2685,14 +2745,14 @@ class TaskProgressTracker {
      */
     async continueGeneralTaskFromCheckpoint(task, startPosition, onUpdate) {
         const totalSteps = task.steps.length || task.phases.length || 1;
-        
+
         for (let i = startPosition + 1; i < totalSteps; i++) {
             const step = task.steps[i] || task.phases[i] || { name: `步骤 ${i + 1}` };
-            
+
             await this.simulateStep(step, task);
-            
+
             task.progress = Math.round(((i + 1) / totalSteps) * 100);
-            
+
             if (onUpdate) {
                 onUpdate({
                     type: 'step_completed',
@@ -2764,7 +2824,7 @@ class TaskProgressTracker {
             'medium': 1000,
             'complex': 2000
         };
-        
+
         await this.delay(durations[complexity] || 1000);
     }
 
@@ -2778,11 +2838,11 @@ class TaskProgressTracker {
             task.status = 'completed';
             task.endTime = Date.now();
             task.progress = 100;
-            
+
             // 移动到历史记录
             this.taskHistory.set(taskId, task);
             this.activeTasks.delete(taskId);
-            
+
             return true;
         }
         return false;
@@ -2807,7 +2867,7 @@ class TaskProgressTracker {
     getTaskStatistics() {
         const activeTasks = this.getActiveTasks();
         const taskHistory = this.getTaskHistory();
-        
+
         return {
             total: activeTasks.length + taskHistory.length,
             active: activeTasks.length,
@@ -2823,11 +2883,11 @@ class TaskProgressTracker {
     calculateAverageCompletionTime(tasks) {
         const completedTasks = tasks.filter(t => t.status === 'completed' && t.endTime);
         if (completedTasks.length === 0) return 0;
-        
+
         const totalTime = completedTasks.reduce((sum, task) => {
             return sum + (task.endTime - task.startTime);
         }, 0);
-        
+
         return Math.round(totalTime / completedTasks.length);
     }
 
