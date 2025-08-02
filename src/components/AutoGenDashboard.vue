@@ -251,14 +251,10 @@ const refreshData = async () => {
     }
 }
 
-// 更新当前团队
+// 更新当前团队（现在从props获取，无需本地更新）
 const updateCurrentTeam = async () => {
-    const savedTeams = localStorage.getItem('agentTeamList')
-    if (savedTeams) {
-        const teams = JSON.parse(savedTeams)
-        const defaultTeam = teams.find(team => team.isDefault)
-        currentTeam.value = defaultTeam || teams[0] || null
-    }
+    // 当前团队信息从父组件传入，无需本地获取
+    console.log('当前团队信息:', props.currentTeam)
 }
 
 // 更新活跃任务
@@ -275,13 +271,13 @@ const updateActiveTask = async () => {
 
 // 更新智能体表现
 const updateAgentPerformances = async () => {
-    if (!currentTeam.value) {
+    if (!props.currentTeam) {
         agentPerformances.value = []
         return
     }
 
     // 模拟智能体表现数据（实际项目中应该从服务获取）
-    agentPerformances.value = currentTeam.value.agents.map(agent => ({
+    agentPerformances.value = props.currentTeam.agents.map(agent => ({
         agentId: agent.id,
         name: agent.name,
         avatar: agent.avatar,
